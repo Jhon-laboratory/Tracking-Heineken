@@ -14,7 +14,6 @@ $estados = [
 // VERIFICACIÓN DE LOGIN PERSISTENTE
 require_once 'conexion.php';
 
-// Función para verificar token persistente
 function verificarTokenPersistente() {
     if (isset($_COOKIE['remember_token']) && isset($_COOKIE['remember_user'])) {
         $database = new Database();
@@ -45,7 +44,6 @@ function verificarTokenPersistente() {
     return false;
 }
 
-// Si NO hay sesión, intentar con token persistente
 if (!isset($_SESSION['user_id'])) {
     if (!verificarTokenPersistente()) {
         header('Location: login.php');
@@ -53,25 +51,8 @@ if (!isset($_SESSION['user_id'])) {
     }
 }
 
-// VERIFICAR SI ESTÁ COMPLETADO Y REINICIAR
-function verificarYReiniciar() {
-    if (isset($_SESSION['progreso'])) {
-        $total_estados = 7;
-        $marcados = count($_SESSION['progreso']['marcados'] ?? []);
-        
-        if ($marcados >= $total_estados) {
-            $_SESSION['progreso'] = [
-                'estado_actual' => 'salida_ruta', 
-                'marcados' => [],
-                'placa_seleccionada' => null
-            ];
-            return true;
-        }
-    }
-    return false;
-}
-
-// Inicializar progreso si no existe
+// AHORA: El progreso se manejará DESDE LOCALSTORAGE
+// Solo inicializamos sesión vacía, el progreso viene del celular
 if (!isset($_SESSION['progreso'])) {
     $_SESSION['progreso'] = [
         'estado_actual' => 'salida_ruta', 
@@ -80,10 +61,7 @@ if (!isset($_SESSION['progreso'])) {
     ];
 }
 
-// Verificar si hay que reiniciar
-$reiniciado = verificarYReiniciar();
-
-// Obtener placas SOLO de la ciudad del usuario
+// Obtener placas de la ciudad del usuario
 function obtenerPlacasPorCiudad($ciudad) {
     if (empty($ciudad)) return array();
     
@@ -114,64 +92,56 @@ if (empty($placas_disponibles)) {
     $placas_disponibles = array('NO HAY PLACAS DISPONIBLES PARA ' . strtoupper($ciudad_usuario));
 }
 
-// PROCESAR MARCADOR
+// PROCESAR MARCADOR - Solo guarda en BD, el progreso lo maneja JS
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['estado'])) {
     $estado = $_POST['estado'];
     $placa = $_POST['placa'] ?? '';
     $latitud = isset($_POST['latitud']) ? $_POST['latitud'] : null;
     $longitud = isset($_POST['longitud']) ? $_POST['longitud'] : null;
     $precision_gps = isset($_POST['precision']) ? $_POST['precision'] : null;
+    $fecha_marcacion = $_POST['fecha'] ?? date('Y-m-d H:i:s');
     
-    $p = $_SESSION['progreso'];
-    $keys = array_keys($estados);
-    $i = array_search($p['estado_actual'], $keys);
-
-    if ($estado === $keys[$i]) {
-        // Actualizar sesión
-        $p['marcados'][$estado] = date('Y-m-d H:i:s');
-        $p['estado_actual'] = isset($keys[$i+1]) ? $keys[$i+1] : $estado;
-        
-        if ($estado === 'salida_ruta' || $estado === 'retorno_ruta') {
-            if (!empty($placa) && strpos($placa, 'NO HAY PLACAS') === false) {
-                $p['placa_seleccionada'] = $placa;
-            }
-        }
-        
-        $_SESSION['progreso'] = $p;
-        
-        // Guardar en base de datos la marcación
-        $database = new Database();
-        $conn = $database->getConnection();
-        
-        $query = "INSERT INTO DPL.externos.marcaciones_tracking 
-                  (usuario_id, usuario_nombre, usuario_ciudad, estado_key, estado_nombre, 
-                   placa, latitud, longitud, precision_gps, ip_address, user_agent) 
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        
-        $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
-        $ip_address = $_SERVER['REMOTE_ADDR'] ?? '';
-        
-        $params = array(
-            $_SESSION['user_id'],
-            $_SESSION['user_nombre'],
-            $_SESSION['user_ciudad'] ?? '',
-            $estado,
-            $estados[$estado],
-            $placa,
-            $latitud,
-            $longitud,
-            $precision_gps,
-            $ip_address,
-            $user_agent
-        );
-        
-        $stmt = sqlsrv_query($conn, $query, $params);
-        if ($stmt) {
-            sqlsrv_free_stmt($stmt);
-        }
+    // Guardar en base de datos la marcación
+    $database = new Database();
+    $conn = $database->getConnection();
+    
+    $query = "INSERT INTO DPL.externos.marcaciones_tracking 
+              (usuario_id, usuario_nombre, usuario_ciudad, estado_key, estado_nombre, 
+               placa, latitud, longitud, precision_gps, ip_address, user_agent,
+               fecha_marcacion) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    
+    $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    $ip_address = $_SERVER['REMOTE_ADDR'] ?? '';
+    
+    $params = array(
+        $_SESSION['user_id'],
+        $_SESSION['user_nombre'],
+        $_SESSION['user_ciudad'] ?? '',
+        $estado,
+        $estados[$estado],
+        $placa,
+        $latitud,
+        $longitud,
+        $precision_gps,
+        $ip_address,
+        $user_agent,
+        $fecha_marcacion
+    );
+    
+    $stmt = sqlsrv_query($conn, $query, $params);
+    if ($stmt) {
+        sqlsrv_free_stmt($stmt);
     }
+    
+    echo json_encode(array('success' => true));
+    exit;
+}
 
-    echo json_encode(array('success' => true, 'progreso' => $p));
+// Endpoint para guardar progreso en sesión (cuando el usuario recarga)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_progreso'])) {
+    $_SESSION['progreso'] = json_decode($_POST['progreso'], true);
+    echo json_encode(array('success' => true));
     exit;
 }
 
@@ -180,20 +150,16 @@ $total = count($estados);
 $done = count($p['marcados']);
 $percent = round(($done / $total) * 100);
 
-$mostrar_selector_placa = ($p['estado_actual'] === 'salida_ruta' || 
-                          $p['estado_actual'] === 'retorno_ruta' || 
-                          empty($p['placa_seleccionada']));
 $placa_actual = $p['placa_seleccionada'] ?? '';
-$es_ultimo_estado = $p['estado_actual'] === 'fin_liquidacion_caja';
 ?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
-<title>RANSA - Rastreo <?= $reiniciado ? '(Reiniciado)' : '' ?></title>
-
+<title>RANSA - Rastreo</title>
 <style>
+/* Mismos estilos que antes */
 :root{
     --verde:#009A3F;
     --naranja:#F39200;
@@ -321,7 +287,7 @@ h1{
     font-weight: 600;
 }
 
-/* Selector de placa con buscador */
+/* Selector de placa */
 .placa-container {
     background: #f8f9fa;
     padding: 15px;
@@ -386,10 +352,6 @@ h1{
 .sugerencia-item:hover {
     background: #e8f5e9;
     color: var(--verde);
-}
-
-.sugerencia-item:last-child {
-    border-bottom: none;
 }
 
 .placa-fija {
@@ -570,6 +532,16 @@ button:disabled {
     box-shadow: none;
 }
 
+/* Mensaje de persistencia */
+.persistencia-info {
+    text-align: center;
+    color: #888;
+    font-size: 0.7rem;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #eee;
+}
+
 @keyframes pop{
     from{transform:scale(.9); opacity:.7}
     to{transform:scale(1); opacity:1}
@@ -581,21 +553,6 @@ button:disabled {
     .circle { width: min(150px, 35vw); height: min(150px, 35vw); }
     h1 { font-size: 1.8rem; }
 }
-
-@media (max-height: 580px) {
-    .container { padding: 10px 16px; gap: 10px; }
-    .card:first-child { padding: 12px 18px; }
-    .circle { width: min(130px, 32vw); height: min(130px, 32vw); }
-    h1 { font-size: 1.6rem; }
-}
-
-@media (max-height: 480px) {
-    .container { padding: 8px 16px; gap: 8px; }
-    .card:first-child { padding: 10px 16px; }
-    .circle { width: min(110px, 28vw); height: min(110px, 28vw); }
-    h1 { font-size: 1.4rem; }
-    button { padding: 12px; font-size: 1rem; }
-}
 </style>
 </head>
 <body>
@@ -606,7 +563,6 @@ button:disabled {
     <div>
         <h1>RANSA</h1>
         
-        <!-- INDICADOR GPS - PHP 7.4 compatible -->
         <div id="gpsIndicator" class="gps-indicator">
             <span class="gps-pulse gps-pulse-inactive"></span>
             <span class="gps-inactive">📍 GPS: Obteniendo ubicación...</span>
@@ -618,74 +574,42 @@ button:disabled {
         </div>
         <?php endif; ?>
         
-        <?php if($reiniciado): ?>
-        <div style="text-align:center; color:var(--verde); font-size:0.8rem; margin-top:5px;">
-            ✅ Tracking completado - Nuevo viaje iniciado
+        <!-- Indicador de persistencia -->
+        <div class="persistencia-info">
+            💾 Tu progreso se guarda automáticamente en el celular
         </div>
-        <?php endif; ?>
     </div>
 
     <div class="circle-wrapper">
-        <div class="circle">
-            <div class="main"><?= $percent ?>%</div>
+        <div id="circleProgress" class="circle">
+            <div id="percentText" class="main">0%</div>
         </div>
     </div>
 
     <div>
-        <div class="timeline">
-            <?php $i=0; foreach($estados as $k=>$v):
-                $isDone = isset($p['marcados'][$k]);
-                $isActive = $k === $p['estado_actual'];
-            ?>
-                <div class="step <?= $isDone?'done':'' ?> <?= $isActive?'active':'' ?>"></div>
-                <?php if($i<$total-1): ?>
-                    <div class="line <?= $isDone?'done':'' ?>"></div>
-                <?php endif; $i++; endforeach; ?>
+        <div id="timelineContainer" class="timeline">
+            <!-- Los steps se generarán con JavaScript -->
         </div>
 
-        <div class="estado">
+        <div id="estadoContainer" class="estado">
             Estado actual:
-            <strong><?= $estados[$p['estado_actual']] ?></strong>
+            <strong id="estadoActualTexto">Cargando...</strong>
         </div>
     </div>
 </div>
 
 <div class="card">
-    <?php if ($mostrar_selector_placa): ?>
-        <div class="placa-container">
-            <label class="placa-label">🚛 Busca o selecciona la placa del vehículo</label>
-            <div class="placa-input-container">
-                <input type="text" 
-                       id="placaInput" 
-                       class="placa-input" 
-                       placeholder="Escribe para buscar..." 
-                       value="<?= htmlspecialchars($placa_actual) ?>"
-                       autocomplete="off"
-                       <?= empty($placas_disponibles) ? 'disabled' : '' ?>>
-                <div id="sugerencias" class="sugerencias-placa"></div>
-            </div>
-            <?php if(empty($placas_disponibles)): ?>
-                <div style="color:#c62828; margin-top:10px; font-size:0.9rem;">
-                    ⚠️ No hay placas registradas para <?= htmlspecialchars($ciudad_usuario) ?>
-                </div>
-            <?php endif; ?>
-        </div>
-    <?php else: ?>
-        <div class="placa-fija">
-            <span>🚛 Placa asignada</span>
-            <strong><?= htmlspecialchars($placa_actual) ?></strong>
-        </div>
-    <?php endif; ?>
+    <div id="placaSelectorContainer">
+        <!-- El selector de placa se genera con JavaScript -->
+    </div>
     
-    <button onclick="marcarEstadoConGPS('<?= $p['estado_actual'] ?>')" id="btnMarcar" <?= $es_ultimo_estado ? 'disabled' : '' ?>>
-        <?= $es_ultimo_estado ? '✅ TRACKING COMPLETADO' : 'MARCAR ESTADO' ?>
+    <button onclick="marcarEstado()" id="btnMarcar">
+        MARCAR ESTADO
     </button>
     
-    <?php if($es_ultimo_estado): ?>
-    <button onclick="reiniciarTracking()" class="btn-reinicio">
+    <button onclick="reiniciarTracking()" id="btnReinicio" style="display:none;" class="btn-reinicio">
         🔄 INICIAR NUEVO VIAJE
     </button>
-    <?php endif; ?>
     
     <button onclick="cerrarSesion()" class="logout-btn">
         Cerrar sesión
@@ -695,18 +619,216 @@ button:disabled {
 </div>
 
 <script>
-// Variables GPS
+// ============================================
+// PERSISTENCIA CON LOCALSTORAGE
+// ============================================
+
+// Estados disponibles
+var estadosDisponibles = <?= json_encode($estados) ?>;
+var placasDisponibles = <?= json_encode($placas_disponibles) ?>;
+var ciudadUsuario = '<?= $ciudad_usuario ?>';
+var usuarioId = '<?= $_SESSION['user_id'] ?? '' ?>';
+var usuarioNombre = '<?= $_SESSION['user_nombre'] ?? '' ?>';
+
+// Clave para localStorage (única por usuario)
+var STORAGE_KEY = 'ransa_tracking_' + usuarioId;
+
+// Cargar progreso desde localStorage
+function cargarProgreso() {
+    var guardado = localStorage.getItem(STORAGE_KEY);
+    
+    if (guardado) {
+        try {
+            var progreso = JSON.parse(guardado);
+            console.log('✅ Progreso cargado del celular:', progreso);
+            return progreso;
+        } catch(e) {
+            console.error('Error al cargar progreso:', e);
+        }
+    }
+    
+    // Progreso inicial
+    return {
+        estado_actual: 'salida_ruta',
+        marcados: {},
+        placa_seleccionada: null,
+        fecha_inicio: new Date().toISOString()
+    };
+}
+
+// Guardar progreso en localStorage
+function guardarProgreso(progreso) {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(progreso));
+        console.log('💾 Progreso guardado en celular');
+        
+        // También sincronizar con el servidor (por si acaso)
+        var formData = 'guardar_progreso=1&progreso=' + encodeURIComponent(JSON.stringify(progreso));
+        
+        fetch('', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: formData
+        }).catch(function(e) {
+            console.log('No se pudo sincronizar con servidor:', e);
+        });
+        
+        return true;
+    } catch(e) {
+        console.error('Error al guardar progreso:', e);
+        return false;
+    }
+}
+
+// Reiniciar tracking
+function reiniciarTracking() {
+    if (confirm('¿Finalizar este viaje y comenzar uno nuevo?')) {
+        var nuevoProgreso = {
+            estado_actual: 'salida_ruta',
+            marcados: {},
+            placa_seleccionada: null,
+            fecha_inicio: new Date().toISOString()
+        };
+        
+        guardarProgreso(nuevoProgreso);
+        actualizarUI(nuevoProgreso);
+    }
+}
+
+// ============================================
+// VARIABLES GLOBALES
+// ============================================
+
+var progresoActual = cargarProgreso();
 var gpsActivo = false;
 var latitud = null;
 var longitud = null;
 var precision = null;
 var gpsIntentos = 0;
 
-// Lista de placas disponibles - PHP 7.4 compatible
-var placasDisponibles = <?= json_encode($placas_disponibles) ?>;
-var placaSeleccionada = '<?= $placa_actual ?>';
+// ============================================
+// FUNCIONES DE INTERFAZ
+// ============================================
 
-// Función para obtener ubicación GPS
+// Actualizar toda la UI según el progreso
+function actualizarUI(progreso) {
+    // Actualizar círculo de progreso
+    var total = Object.keys(estadosDisponibles).length;
+    var marcados = Object.keys(progreso.marcados).length;
+    var percent = Math.round((marcados / total) * 100);
+    
+    var circle = document.getElementById('circleProgress');
+    if (circle) {
+        circle.style.background = 'conic-gradient(var(--verde) 0deg ' + (percent * 3.6) + 'deg, #e5e5e5 ' + (percent * 3.6) + 'deg 360deg)';
+    }
+    
+    var percentText = document.getElementById('percentText');
+    if (percentText) percentText.innerHTML = percent + '%';
+    
+    // Actualizar timeline
+    actualizarTimeline(progreso);
+    
+    // Actualizar estado actual
+    var estadoActualTexto = document.getElementById('estadoActualTexto');
+    if (estadoActualTexto) {
+        estadoActualTexto.innerHTML = estadosDisponibles[progreso.estado_actual] || progreso.estado_actual;
+    }
+    
+    // Actualizar selector de placa
+    actualizarSelectorPlaca(progreso);
+    
+    // Mostrar/ocultar botón de reinicio
+    var esUltimoEstado = progreso.estado_actual === 'fin_liquidacion_caja';
+    var btnReinicio = document.getElementById('btnReinicio');
+    var btnMarcar = document.getElementById('btnMarcar');
+    
+    if (btnReinicio) btnReinicio.style.display = esUltimoEstado ? 'block' : 'none';
+    if (btnMarcar) {
+        btnMarcar.disabled = esUltimoEstado;
+        btnMarcar.innerHTML = esUltimoEstado ? '✅ TRACKING COMPLETADO' : 'MARCAR ESTADO';
+    }
+}
+
+// Actualizar timeline
+function actualizarTimeline(progreso) {
+    var container = document.getElementById('timelineContainer');
+    if (!container) return;
+    
+    var keys = Object.keys(estadosDisponibles);
+    var total = keys.length;
+    var html = '';
+    
+    for (var i = 0; i < keys.length; i++) {
+        var key = keys[i];
+        var isDone = progreso.marcados[key] ? true : false;
+        var isActive = key === progreso.estado_actual;
+        
+        var stepClass = 'step';
+        if (isDone) stepClass += ' done';
+        if (isActive) stepClass += ' active';
+        
+        html += '<div class="' + stepClass + '"></div>';
+        
+        if (i < total - 1) {
+            var lineClass = 'line' + (isDone ? ' done' : '');
+            html += '<div class="' + lineClass + '"></div>';
+        }
+    }
+    
+    container.innerHTML = html;
+}
+
+// Actualizar selector de placa
+function actualizarSelectorPlaca(progreso) {
+    var container = document.getElementById('placaSelectorContainer');
+    if (!container) return;
+    
+    var mostrarSelector = (
+        progreso.estado_actual === 'salida_ruta' || 
+        progreso.estado_actual === 'retorno_ruta' || 
+        !progreso.placa_seleccionada
+    );
+    
+    var placaActual = progreso.placa_seleccionada || '';
+    
+    if (mostrarSelector) {
+        var options = '';
+        if (placasDisponibles.length > 0) {
+            options = '<option value="" disabled ' + (!placaActual ? 'selected' : '') + '>-- Selecciona una placa --</option>';
+            for (var i = 0; i < placasDisponibles.length; i++) {
+                var placa = placasDisponibles[i];
+                if (placa.indexOf('NO HAY PLACAS') === -1) {
+                    options += '<option value="' + placa.replace(/"/g, '&quot;') + '" ' + 
+                              (placaActual === placa ? 'selected' : '') + '>' + placa + '</option>';
+                }
+            }
+        }
+        
+        container.innerHTML = `
+            <div class="placa-container">
+                <label class="placa-label">🚛 Selecciona la placa del vehículo</label>
+                <div class="placa-input-container">
+                    <select id="placaSelect" class="placa-select" style="width:100%; padding:14px 18px; border:2px solid #e5e5e5; border-radius:15px; font-size:1.1rem; background:white; appearance:auto;" required>
+                        ${options}
+                    </select>
+                </div>
+                ${placasDisponibles.length === 0 ? '<div style="color:#c62828; margin-top:10px;">⚠️ No hay placas registradas para ' + ciudadUsuario + '</div>' : ''}
+            </div>
+        `;
+    } else {
+        container.innerHTML = `
+            <div class="placa-fija">
+                <span>🚛 Placa asignada</span>
+                <strong>${placaActual}</strong>
+            </div>
+        `;
+    }
+}
+
+// ============================================
+// FUNCIONES GPS
+// ============================================
+
 function obtenerGPS() {
     var indicator = document.getElementById('gpsIndicator');
     
@@ -718,7 +840,6 @@ function obtenerGPS() {
     indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">📍 GPS: Obteniendo ubicación...</span>';
     
     navigator.geolocation.getCurrentPosition(
-        // Éxito
         function(position) {
             latitud = position.coords.latitude;
             longitud = position.coords.longitude;
@@ -726,9 +847,7 @@ function obtenerGPS() {
             gpsActivo = true;
             
             indicator.innerHTML = '<span class="gps-pulse gps-pulse-active"></span><span class="gps-active">📍 GPS ACTIVO</span>';
-            console.log('GPS activo - Coordenadas obtenidas');
         },
-        // Error
         function(error) {
             gpsActivo = false;
             latitud = null;
@@ -737,133 +856,84 @@ function obtenerGPS() {
             
             var mensaje = '';
             switch(error.code) {
-                case error.PERMISSION_DENIED:
-                    mensaje = '📍 GPS: Permiso denegado';
-                    break;
-                case error.POSITION_UNAVAILABLE:
-                    mensaje = '📍 GPS: No disponible';
-                    break;
-                case error.TIMEOUT:
-                    mensaje = '📍 GPS: Tiempo agotado';
-                    break;
-                default:
-                    mensaje = '📍 GPS: Error';
+                case error.PERMISSION_DENIED: mensaje = '📍 GPS: Permiso denegado'; break;
+                case error.POSITION_UNAVAILABLE: mensaje = '📍 GPS: No disponible'; break;
+                case error.TIMEOUT: mensaje = '📍 GPS: Tiempo agotado'; break;
+                default: mensaje = '📍 GPS: Error';
             }
             
             indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">' + mensaje + '</span>';
             
-            // Reintentar hasta 3 veces
             if (gpsIntentos < 3) {
                 gpsIntentos++;
                 setTimeout(obtenerGPS, 5000);
             }
         },
-        {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0
-        }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
 }
 
-// Función para filtrar placas - PHP 7.4 compatible
-function filtrarPlacas(busqueda) {
-    if (!placasDisponibles.length) return [];
-    if (!busqueda) return placasDisponibles.slice(0, 5);
-    
-    busqueda = busqueda.toUpperCase();
-    var filtradas = [];
-    
-    for (var i = 0; i < placasDisponibles.length; i++) {
-        var placa = placasDisponibles[i];
-        if (placa.toUpperCase().indexOf(busqueda) > -1) {
-            filtradas.push(placa);
-        }
-        if (filtradas.length >= 5) break;
-    }
-    
-    return filtradas;
-}
+// ============================================
+// FUNCIÓN PRINCIPAL - MARCAR ESTADO
+// ============================================
 
-// Mostrar sugerencias
-function mostrarSugerencias() {
-    var input = document.getElementById('placaInput');
-    var sugerenciasDiv = document.getElementById('sugerencias');
-    
-    if (!input || !sugerenciasDiv) return;
-    
-    var busqueda = input.value;
-    var filtradas = filtrarPlacas(busqueda);
-    
-    if (filtradas.length > 0 && filtradas[0].indexOf('NO HAY PLACAS') === -1) {
-        var html = '';
-        for (var i = 0; i < filtradas.length; i++) {
-            html += '<div class="sugerencia-item" onclick="seleccionarPlaca(\'' + filtradas[i].replace(/'/g, "\\'") + '\')">' + filtradas[i] + '</div>';
-        }
-        sugerenciasDiv.innerHTML = html;
-        sugerenciasDiv.style.display = 'block';
-    } else {
-        sugerenciasDiv.style.display = 'none';
-    }
-}
-
-// Seleccionar placa
-function seleccionarPlaca(placa) {
-    var input = document.getElementById('placaInput');
-    if (input) {
-        input.value = placa;
-        placaSeleccionada = placa;
-    }
-    document.getElementById('sugerencias').style.display = 'none';
-}
-
-// Ocultar sugerencias al hacer clic fuera
-document.addEventListener('click', function(event) {
-    var input = document.getElementById('placaInput');
-    var sugerencias = document.getElementById('sugerencias');
-    if (input && sugerencias && !input.contains(event.target) && !sugerencias.contains(event.target)) {
-        sugerencias.style.display = 'none';
-    }
-});
-
-// Función para marcar estado con GPS
-function marcarEstadoConGPS(estado) {
+function marcarEstado() {
     var btn = document.getElementById('btnMarcar');
+    var progreso = cargarProgreso();
+    
+    // Obtener placa
     var placa = '';
+    var mostrarSelector = (
+        progreso.estado_actual === 'salida_ruta' || 
+        progreso.estado_actual === 'retorno_ruta' || 
+        !progreso.placa_seleccionada
+    );
     
-    <?php if ($mostrar_selector_placa): ?>
-    var inputPlaca = document.getElementById('placaInput');
-    placa = inputPlaca ? inputPlaca.value.trim() : '';
-    
-    if (!placa) {
-        alert('⚠️ Por favor selecciona o escribe una placa');
-        if (inputPlaca) inputPlaca.focus();
-        return;
-    }
-    
-    // Validar placa - PHP 7.4 compatible
-    if (placasDisponibles.length > 0 && placasDisponibles[0].indexOf('NO HAY PLACAS') === -1) {
-        var placaValida = false;
-        for (var i = 0; i < placasDisponibles.length; i++) {
-            if (placasDisponibles[i] === placa) {
-                placaValida = true;
-                break;
-            }
-        }
-        if (!placaValida) {
-            alert('⚠️ La placa ingresada no está registrada. Por favor selecciona de la lista.');
+    if (mostrarSelector) {
+        var select = document.getElementById('placaSelect');
+        placa = select ? select.value : '';
+        
+        if (!placa) {
+            alert('⚠️ Por favor selecciona una placa');
+            if (select) select.focus();
             return;
         }
+    } else {
+        placa = progreso.placa_seleccionada || '';
     }
-    <?php else: ?>
-    placa = '<?= $placa_actual ?>';
-    <?php endif; ?>
     
     btn.disabled = true;
     btn.innerHTML = '⏳ PROCESANDO...';
     
-    // Construir datos
-    var formData = 'estado=' + estado + '&placa=' + encodeURIComponent(placa);
+    // 1. Actualizar progreso LOCALMENTE
+    var estadoActual = progreso.estado_actual;
+    var fechaAhora = new Date();
+    var fechaStr = fechaAhora.getFullYear() + '-' + 
+                   String(fechaAhora.getMonth() + 1).padStart(2, '0') + '-' +
+                   String(fechaAhora.getDate()).padStart(2, '0') + ' ' +
+                   String(fechaAhora.getHours()).padStart(2, '0') + ':' +
+                   String(fechaAhora.getMinutes()).padStart(2, '0') + ':' +
+                   String(fechaAhora.getSeconds()).padStart(2, '0');
+    
+    progreso.marcados[estadoActual] = fechaStr;
+    
+    var keys = Object.keys(estadosDisponibles);
+    var i = keys.indexOf(estadoActual);
+    progreso.estado_actual = keys[i + 1] || estadoActual;
+    
+    if (estadoActual === 'salida_ruta' || estadoActual === 'retorno_ruta') {
+        if (placa && placa.indexOf('NO HAY PLACAS') === -1) {
+            progreso.placa_seleccionada = placa;
+        }
+    }
+    
+    // 2. Guardar en localStorage (celular)
+    guardarProgreso(progreso);
+    
+    // 3. Enviar a la base de datos
+    var formData = 'estado=' + estadoActual + 
+                   '&placa=' + encodeURIComponent(placa) +
+                   '&fecha=' + encodeURIComponent(fechaStr);
     
     if (latitud && longitud) {
         formData += '&latitud=' + latitud + '&longitud=' + longitud + '&precision=' + precision;
@@ -878,48 +948,34 @@ function marcarEstadoConGPS(estado) {
     .then(function(d) {
         if (navigator.vibrate) { navigator.vibrate(60); }
         btn.innerHTML = '✅ ¡MARCADO EXITOSO!';
-        setTimeout(function() { location.reload(); }, 800);
+        
+        // Actualizar UI
+        actualizarUI(progreso);
+        
+        setTimeout(function() { 
+            btn.disabled = false;
+            btn.innerHTML = 'MARCAR ESTADO';
+        }, 800);
     })
     .catch(function(error) {
         console.error('Error:', error);
-        alert('Error al marcar estado. Intenta nuevamente.');
+        alert('❌ Error de conexión. La marcación se guardó en el celular y se enviará cuando haya conexión.');
         btn.disabled = false;
-        btn.innerHTML = 'MARCAR ESTADO';
+        btn.innerHTML = 'MARCAR ESTADO (OFFLINE)';
+        
+        // Aún así actualizar UI
+        actualizarUI(progreso);
     });
 }
 
-// Reiniciar tracking
-function reiniciarTracking() {
-    if (confirm('¿Finalizar este viaje y comenzar uno nuevo?')) {
-        fetch('', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'reiniciar=1'
-        }).then(function() {
-            location.reload();
-        });
-    }
-}
+// ============================================
+// INICIALIZACIÓN
+// ============================================
 
-// Cerrar sesión
-function cerrarSesion() {
-    if (confirm('¿Cerrar sesión?')) {
-        document.cookie = 'remember_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        document.cookie = 'remember_user=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        window.location.href = 'login.php';
-    }
-}
-
-// Event listeners
 document.addEventListener('DOMContentLoaded', function() {
-    var input = document.getElementById('placaInput');
-    if (input) {
-        input.addEventListener('input', mostrarSugerencias);
-        input.addEventListener('focus', mostrarSugerencias);
-        if (placaSeleccionada) {
-            input.value = placaSeleccionada;
-        }
-    }
+    // Cargar progreso y actualizar UI
+    var progreso = cargarProgreso();
+    actualizarUI(progreso);
     
     // Iniciar GPS
     obtenerGPS();
@@ -930,7 +986,25 @@ document.addEventListener('DOMContentLoaded', function() {
             obtenerGPS();
         }
     }, 30000);
+    
+    // Auto-respaldo cada 30 segundos
+    setInterval(function() {
+        var progreso = cargarProgreso();
+        guardarProgreso(progreso);
+    }, 30000);
+    
+    console.log('🚀 App iniciada - Progreso guardado en el celular');
 });
+
+// Cerrar sesión
+function cerrarSesion() {
+    if (confirm('¿Cerrar sesión?')) {
+        // NO borramos localStorage aquí para que cuando vuelva a iniciar sesión, recupere su progreso
+        document.cookie = 'remember_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        document.cookie = 'remember_user=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        window.location.href = 'login.php';
+    }
+}
 
 // Ajuste de altura
 function ajustarAltura() {
