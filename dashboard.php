@@ -1,6 +1,9 @@
 <?php
 session_start();
 
+// ============================================
+// 7 ESTADOS EXACTOS
+// ============================================
 $estados = [
     'salida_ruta' => 'Salida Ruta',
     'retorno_ruta' => 'Retorno de ruta',
@@ -11,7 +14,7 @@ $estados = [
     'fin_liquidacion_caja' => 'Fin liquidación en caja'
 ];
 
-// VERIFICACIÓN DE LOGIN PERSISTENTE
+// VERIFICACIÓN DE LOGIN
 require_once 'conexion.php';
 
 function verificarTokenPersistente() {
@@ -34,7 +37,6 @@ function verificarTokenPersistente() {
                 $_SESSION['user_nombre'] = $user['nombre_completo'];
                 $_SESSION['user_usuario'] = $user['usuario'];
                 $_SESSION['user_ciudad'] = $user['ciudad'];
-                $_SESSION['login_time'] = time();
                 sqlsrv_free_stmt($stmt);
                 return true;
             }
@@ -49,16 +51,6 @@ if (!isset($_SESSION['user_id'])) {
         header('Location: login.php');
         exit;
     }
-}
-
-// AHORA: El progreso se manejará DESDE LOCALSTORAGE
-// Solo inicializamos sesión vacía, el progreso viene del celular
-if (!isset($_SESSION['progreso'])) {
-    $_SESSION['progreso'] = [
-        'estado_actual' => 'salida_ruta', 
-        'marcados' => [],
-        'placa_seleccionada' => null
-    ];
 }
 
 // Obtener placas de la ciudad del usuario
@@ -92,7 +84,7 @@ if (empty($placas_disponibles)) {
     $placas_disponibles = array('NO HAY PLACAS DISPONIBLES PARA ' . strtoupper($ciudad_usuario));
 }
 
-// PROCESAR MARCADOR - Solo guarda en BD, el progreso lo maneja JS
+// PROCESAR MARCADOR
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['estado'])) {
     $estado = $_POST['estado'];
     $placa = $_POST['placa'] ?? '';
@@ -101,7 +93,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['estado'])) {
     $precision_gps = isset($_POST['precision']) ? $_POST['precision'] : null;
     $fecha_marcacion = $_POST['fecha'] ?? date('Y-m-d H:i:s');
     
-    // Guardar en base de datos la marcación
     $database = new Database();
     $conn = $database->getConnection();
     
@@ -138,19 +129,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['estado'])) {
     exit;
 }
 
-// Endpoint para guardar progreso en sesión (cuando el usuario recarga)
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_progreso'])) {
-    $_SESSION['progreso'] = json_decode($_POST['progreso'], true);
-    echo json_encode(array('success' => true));
-    exit;
-}
-
-$p = $_SESSION['progreso'];
-$total = count($estados);
-$done = count($p['marcados']);
-$percent = round(($done / $total) * 100);
-
-$placa_actual = $p['placa_seleccionada'] ?? '';
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -159,11 +137,11 @@ $placa_actual = $p['placa_seleccionada'] ?? '';
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
 <title>RANSA - Rastreo</title>
 <style>
-/* Mismos estilos que antes */
 :root{
     --verde:#009A3F;
     --naranja:#F39200;
     --gris:#9D9D9C;
+    --rojo:#c62828;
     --fondo:#f6f7f8;
 }
 
@@ -225,7 +203,7 @@ body{
 h1{
     text-align:center;
     color:var(--verde);
-    margin:0;
+    margin:0 0 5px 0;
     font-size:2rem;
     letter-spacing:1.5px;
     font-weight:700;
@@ -237,7 +215,7 @@ h1{
     align-items: center;
     justify-content: center;
     gap: 8px;
-    margin-top: 8px;
+    margin-top: 5px;
     margin-bottom: 5px;
     padding: 8px 12px;
     background: #f8f9fa;
@@ -251,7 +229,7 @@ h1{
 }
 
 .gps-inactive {
-    color: #c62828;
+    color: var(--rojo);
     font-weight: 600;
 }
 
@@ -270,7 +248,7 @@ h1{
 }
 
 .gps-pulse-inactive {
-    background: #c62828;
+    background: var(--rojo);
 }
 
 @keyframes pulse {
@@ -283,7 +261,7 @@ h1{
     text-align: center;
     color: var(--naranja);
     font-size: 0.8rem;
-    margin-top: 5px;
+    margin-top: 2px;
     font-weight: 600;
 }
 
@@ -293,7 +271,6 @@ h1{
     padding: 15px;
     border-radius: 16px;
     margin-bottom: 15px;
-    position: relative;
 }
 
 .placa-label {
@@ -304,54 +281,21 @@ h1{
     font-size: 0.9rem;
 }
 
-.placa-input-container {
-    position: relative;
-}
-
-.placa-input {
+.placa-select {
     width: 100%;
     padding: 14px 18px;
     border: 2px solid #e5e5e5;
     border-radius: 15px;
     font-size: 1.1rem;
-    text-transform: uppercase;
     background: white;
     transition: all 0.2s;
+    cursor: pointer;
 }
 
-.placa-input:focus {
+.placa-select:focus {
     border-color: var(--verde);
     outline: none;
     box-shadow: 0 0 0 4px rgba(0,154,63,0.1);
-}
-
-.sugerencias-placa {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    max-height: 200px;
-    overflow-y: auto;
-    background: white;
-    border: 2px solid var(--verde);
-    border-top: none;
-    border-radius: 0 0 15px 15px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-    z-index: 1000;
-    display: none;
-}
-
-.sugerencia-item {
-    padding: 12px 18px;
-    cursor: pointer;
-    border-bottom: 1px solid #f0f0f0;
-    font-size: 1rem;
-    transition: background 0.2s;
-}
-
-.sugerencia-item:hover {
-    background: #e8f5e9;
-    color: var(--verde);
 }
 
 .placa-fija {
@@ -374,11 +318,12 @@ h1{
     font-size: 0.9rem;
 }
 
+/* Círculo de progreso */
 .circle-wrapper {
     display:flex;
     justify-content:center;
     align-items:center;
-    margin: 5px 0;
+    margin: 10px 0;
 }
 
 .circle{
@@ -387,12 +332,12 @@ h1{
     max-width: 180px;
     max-height: 180px;
     border-radius:50%;
-    background: conic-gradient(var(--verde) 0deg <?= $percent * 3.6 ?>deg, #e5e5e5 <?= $percent * 3.6 ?>deg 360deg);
+    background: conic-gradient(var(--verde) 0deg 0deg, #e5e5e5 0deg 360deg);
     display:flex;
     align-items:center;
     justify-content:center;
     position:relative;
-    animation: pop .4s ease;
+    transition: background 0.3s ease;
 }
 
 .circle::before {
@@ -413,11 +358,12 @@ h1{
     z-index:2;
 }
 
+/* Timeline */
 .timeline{
     display:flex;
     justify-content:space-between;
     align-items:center;
-    margin: 12px 0 8px;
+    margin: 15px 0 10px;
 }
 
 .step{
@@ -451,11 +397,12 @@ h1{
     background:var(--verde);
 }
 
+/* Estado actual */
 .estado{
     text-align:center;
     color:#555;
-    margin-top: 8px;
-    padding-top: 12px;
+    margin-top: 10px;
+    padding-top: 15px;
     border-top:1.5px solid #f0f0f0;
 }
 
@@ -467,7 +414,8 @@ h1{
     font-weight:700;
 }
 
-button{
+/* Botones */
+.btn-marcar {
     width:100%;
     padding: clamp(14px, 3vh, 20px);
     border:none;
@@ -481,77 +429,96 @@ button{
     letter-spacing:1px;
     box-shadow:0 4px 0 #006e2c;
     border:1px solid rgba(255,255,255,0.2);
+    margin-bottom: 10px;
 }
 
-button:hover{
+.btn-marcar:hover:not(:disabled){
     background:#007a32;
     transform:translateY(-3px);
     box-shadow:0 7px 0 #006e2c, 0 15px 25px rgba(0,122,50,.25);
 }
 
-button:active {
+.btn-marcar:active:not(:disabled) {
     transform:translateY(4px);
     box-shadow:0 2px 0 #006e2c;
 }
 
-button:disabled {
-    opacity: 0.6;
+.btn-marcar:disabled {
+    opacity: 0.5;
     cursor: not-allowed;
     transform: none;
     box-shadow: 0 4px 0 #006e2c;
+    background: #ccc;
 }
 
 .btn-reinicio {
+    width:100%;
+    padding: clamp(14px, 3vh, 20px);
+    border:none;
+    border-radius:22px;
+    font-size: clamp(1.1rem, 4vw, 1.3rem);
+    font-weight:800;
     background: var(--naranja);
-    box-shadow: 0 4px 0 #c07100;
-    margin-top: 10px;
+    color:white;
+    cursor:pointer;
+    transition:.2s;
+    letter-spacing:1px;
+    box-shadow:0 4px 0 #c07100;
+    border:1px solid rgba(255,255,255,0.2);
+    margin-bottom: 10px;
 }
 
 .btn-reinicio:hover {
     background: #e08500;
-    box-shadow: 0 7px 0 #c07100, 0 15px 25px rgba(224,133,0,.25);
+    transform:translateY(-3px);
+    box-shadow:0 7px 0 #c07100, 0 15px 25px rgba(224,133,0,.25);
 }
 
 .logout-btn {
+    width:100%;
     background: #f0f0f0;
     border: none;
     color: #666;
-    font-size: 0.8rem;
+    font-size: 0.9rem;
     cursor: pointer;
-    padding: 8px 16px;
+    padding: 12px 16px;
     border-radius: 20px;
-    margin-top: 10px;
+    margin-top: 5px;
     transition: all 0.2s;
     box-shadow: none;
+    font-weight: normal;
 }
 
 .logout-btn:hover {
     background: #ffebee;
-    color: #c62828;
+    color: var(--rojo);
     transform: none;
     box-shadow: none;
 }
 
-/* Mensaje de persistencia */
+.completado-badge {
+    background: var(--verde);
+    color: white;
+    text-align: center;
+    padding: 15px;
+    border-radius: 50px;
+    font-weight: bold;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+}
+
 .persistencia-info {
     text-align: center;
     color: #888;
     font-size: 0.7rem;
-    margin-top: 10px;
-    padding-top: 10px;
+    margin-top: 8px;
+    padding-top: 8px;
     border-top: 1px solid #eee;
 }
 
 @keyframes pop{
     from{transform:scale(.9); opacity:.7}
     to{transform:scale(1); opacity:1}
-}
-
-@media (max-height: 680px) {
-    .container { padding: 12px 16px; gap: 12px; }
-    .card:first-child { padding: 16px 20px; }
-    .circle { width: min(150px, 35vw); height: min(150px, 35vw); }
-    h1 { font-size: 1.8rem; }
 }
 </style>
 </head>
@@ -574,9 +541,8 @@ button:disabled {
         </div>
         <?php endif; ?>
         
-        <!-- Indicador de persistencia -->
         <div class="persistencia-info">
-            💾 Tu progreso se guarda automáticamente en el celular
+            💾 Tu progreso se guarda automáticamente
         </div>
     </div>
 
@@ -587,67 +553,62 @@ button:disabled {
     </div>
 
     <div>
-        <div id="timelineContainer" class="timeline">
-            <!-- Los steps se generarán con JavaScript -->
-        </div>
-
-        <div id="estadoContainer" class="estado">
-            Estado actual:
-            <strong id="estadoActualTexto">Cargando...</strong>
-        </div>
+        <div id="timelineContainer" class="timeline"></div>
+        <div id="estadoContainer" class="estado"></div>
     </div>
 </div>
 
 <div class="card">
-    <div id="placaSelectorContainer">
-        <!-- El selector de placa se genera con JavaScript -->
+    <!-- PLACA SELECTOR -->
+    <div id="placaSelectorContainer"></div>
+    
+    <!-- BOTONES PRINCIPALES - AHORA SÍ VISIBLES -->
+    <div id="botonesContainer">
+        <!-- Los botones se generan aquí con JavaScript -->
     </div>
     
-    <button onclick="marcarEstado()" id="btnMarcar">
-        MARCAR ESTADO
-    </button>
-    
-    <button onclick="reiniciarTracking()" id="btnReinicio" style="display:none;" class="btn-reinicio">
-        🔄 INICIAR NUEVO VIAJE
-    </button>
-    
-    <button onclick="cerrarSesion()" class="logout-btn">
-        Cerrar sesión
-    </button>
+    <!-- BOTÓN DE CERRAR SESIÓN -->
+    <button onclick="cerrarSesion()" class="logout-btn">Cerrar sesión</button>
 </div>
 
 </div>
 
 <script>
 // ============================================
-// PERSISTENCIA CON LOCALSTORAGE
+// CONFIGURACIÓN INICIAL
 // ============================================
-
-// Estados disponibles
 var estadosDisponibles = <?= json_encode($estados) ?>;
+var keysEstados = Object.keys(estadosDisponibles); // 7 estados
+var TOTAL_ESTADOS = keysEstados.length;
+
 var placasDisponibles = <?= json_encode($placas_disponibles) ?>;
 var ciudadUsuario = '<?= $ciudad_usuario ?>';
 var usuarioId = '<?= $_SESSION['user_id'] ?? '' ?>';
-var usuarioNombre = '<?= $_SESSION['user_nombre'] ?? '' ?>';
 
-// Clave para localStorage (única por usuario)
+// Clave única para localStorage
 var STORAGE_KEY = 'ransa_tracking_' + usuarioId;
 
-// Cargar progreso desde localStorage
+// ============================================
+// PROGRESO - LOCALSTORAGE
+// ============================================
+
 function cargarProgreso() {
     var guardado = localStorage.getItem(STORAGE_KEY);
     
     if (guardado) {
         try {
             var progreso = JSON.parse(guardado);
-            console.log('✅ Progreso cargado del celular:', progreso);
-            return progreso;
+            // Validar que tenga la estructura correcta
+            if (progreso && progreso.estado_actual && progreso.marcados) {
+                console.log('✅ Progreso cargado:', progreso);
+                return progreso;
+            }
         } catch(e) {
-            console.error('Error al cargar progreso:', e);
+            console.error('Error al cargar:', e);
         }
     }
     
-    // Progreso inicial
+    // PROGRESO INICIAL - PRIMER ESTADO
     return {
         estado_actual: 'salida_ruta',
         marcados: {},
@@ -656,67 +617,54 @@ function cargarProgreso() {
     };
 }
 
-// Guardar progreso en localStorage
 function guardarProgreso(progreso) {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(progreso));
-        console.log('💾 Progreso guardado en celular');
-        
-        // También sincronizar con el servidor (por si acaso)
-        var formData = 'guardar_progreso=1&progreso=' + encodeURIComponent(JSON.stringify(progreso));
-        
-        fetch('', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: formData
-        }).catch(function(e) {
-            console.log('No se pudo sincronizar con servidor:', e);
-        });
-        
+        console.log('💾 Progreso guardado');
         return true;
     } catch(e) {
-        console.error('Error al guardar progreso:', e);
+        console.error('Error al guardar:', e);
         return false;
     }
 }
 
-// Reiniciar tracking
-function reiniciarTracking() {
-    if (confirm('¿Finalizar este viaje y comenzar uno nuevo?')) {
-        var nuevoProgreso = {
-            estado_actual: 'salida_ruta',
-            marcados: {},
-            placa_seleccionada: null,
-            fecha_inicio: new Date().toISOString()
-        };
-        
-        guardarProgreso(nuevoProgreso);
-        actualizarUI(nuevoProgreso);
+// ============================================
+// VERIFICAR ESTADO COMPLETADO
+// ============================================
+
+function esTrackingCompletado(progreso) {
+    var ultimoEstado = keysEstados[TOTAL_ESTADOS - 1]; // fin_liquidacion_caja
+    
+    // CASO 1: Ya marcó el último estado
+    if (progreso.marcados[ultimoEstado]) {
+        return true;
     }
+    
+    // CASO 2: Ya marcó 7 estados
+    var marcadosCount = Object.keys(progreso.marcados).length;
+    if (marcadosCount >= TOTAL_ESTADOS) {
+        return true;
+    }
+    
+    return false;
+}
+
+function obtenerSiguienteEstado(estadoActual) {
+    var index = keysEstados.indexOf(estadoActual);
+    if (index === TOTAL_ESTADOS - 1) return null;
+    return keysEstados[index + 1];
 }
 
 // ============================================
-// VARIABLES GLOBALES
+// ACTUALIZAR INTERFAZ
 // ============================================
 
-var progresoActual = cargarProgreso();
-var gpsActivo = false;
-var latitud = null;
-var longitud = null;
-var precision = null;
-var gpsIntentos = 0;
-
-// ============================================
-// FUNCIONES DE INTERFAZ
-// ============================================
-
-// Actualizar toda la UI según el progreso
 function actualizarUI(progreso) {
-    // Actualizar círculo de progreso
-    var total = Object.keys(estadosDisponibles).length;
-    var marcados = Object.keys(progreso.marcados).length;
-    var percent = Math.round((marcados / total) * 100);
+    // 1. Calcular porcentaje
+    var marcadosCount = Object.keys(progreso.marcados).length;
+    var percent = Math.round((marcadosCount / TOTAL_ESTADOS) * 100);
     
+    // 2. Actualizar círculo
     var circle = document.getElementById('circleProgress');
     if (circle) {
         circle.style.background = 'conic-gradient(var(--verde) 0deg ' + (percent * 3.6) + 'deg, #e5e5e5 ' + (percent * 3.6) + 'deg 360deg)';
@@ -725,41 +673,26 @@ function actualizarUI(progreso) {
     var percentText = document.getElementById('percentText');
     if (percentText) percentText.innerHTML = percent + '%';
     
-    // Actualizar timeline
+    // 3. Timeline
     actualizarTimeline(progreso);
     
-    // Actualizar estado actual
-    var estadoActualTexto = document.getElementById('estadoActualTexto');
-    if (estadoActualTexto) {
-        estadoActualTexto.innerHTML = estadosDisponibles[progreso.estado_actual] || progreso.estado_actual;
-    }
+    // 4. Estado actual
+    actualizarEstadoActual(progreso, marcadosCount);
     
-    // Actualizar selector de placa
+    // 5. Selector de placa
     actualizarSelectorPlaca(progreso);
     
-    // Mostrar/ocultar botón de reinicio
-    var esUltimoEstado = progreso.estado_actual === 'fin_liquidacion_caja';
-    var btnReinicio = document.getElementById('btnReinicio');
-    var btnMarcar = document.getElementById('btnMarcar');
-    
-    if (btnReinicio) btnReinicio.style.display = esUltimoEstado ? 'block' : 'none';
-    if (btnMarcar) {
-        btnMarcar.disabled = esUltimoEstado;
-        btnMarcar.innerHTML = esUltimoEstado ? '✅ TRACKING COMPLETADO' : 'MARCAR ESTADO';
-    }
+    // 6. BOTONES - ¡LO MÁS IMPORTANTE!
+    actualizarBotones(progreso);
 }
 
-// Actualizar timeline
 function actualizarTimeline(progreso) {
     var container = document.getElementById('timelineContainer');
     if (!container) return;
     
-    var keys = Object.keys(estadosDisponibles);
-    var total = keys.length;
     var html = '';
-    
-    for (var i = 0; i < keys.length; i++) {
-        var key = keys[i];
+    for (var i = 0; i < keysEstados.length; i++) {
+        var key = keysEstados[i];
         var isDone = progreso.marcados[key] ? true : false;
         var isActive = key === progreso.estado_actual;
         
@@ -769,50 +702,86 @@ function actualizarTimeline(progreso) {
         
         html += '<div class="' + stepClass + '"></div>';
         
-        if (i < total - 1) {
-            var lineClass = 'line' + (isDone ? ' done' : '');
+        if (i < keysEstados.length - 1) {
+            var lineClass = 'line';
+            if (isDone) lineClass += ' done';
             html += '<div class="' + lineClass + '"></div>';
         }
     }
-    
     container.innerHTML = html;
 }
 
-// Actualizar selector de placa
+function actualizarEstadoActual(progreso, marcadosCount) {
+    var container = document.getElementById('estadoContainer');
+    if (!container) return;
+    
+    var esCompletado = esTrackingCompletado(progreso);
+    
+    if (esCompletado) {
+        container.innerHTML = `
+            <div style="text-align:center; padding:15px; background:#e8f5e9; border-radius:15px; color:var(--verde); font-weight:bold;">
+                ✅ ¡VIAJE COMPLETADO!<br>
+                <span style="font-size:0.9rem;">7/7 estados</span>
+            </div>
+        `;
+    } else {
+        var estadoTexto = estadosDisponibles[progreso.estado_actual] || progreso.estado_actual;
+        container.innerHTML = `
+            <div class="estado">
+                Estado actual:
+                <strong>${estadoTexto}</strong>
+                <div style="font-size:0.8rem; color:#888; margin-top:5px;">
+                    ${marcadosCount}/7 estados completados
+                </div>
+            </div>
+        `;
+    }
+}
+
 function actualizarSelectorPlaca(progreso) {
     var container = document.getElementById('placaSelectorContainer');
     if (!container) return;
     
+    var esCompletado = esTrackingCompletado(progreso);
+    var placaActual = progreso.placa_seleccionada || '';
+    
+    // Si el viaje está completado, no mostrar selector de placa
+    if (esCompletado) {
+        container.innerHTML = `
+            <div class="completado-badge">
+                ✅ VIAJE COMPLETADO
+            </div>
+        `;
+        return;
+    }
+    
+    // Mostrar selector SOLO en primeros 2 estados o si no hay placa
     var mostrarSelector = (
         progreso.estado_actual === 'salida_ruta' || 
         progreso.estado_actual === 'retorno_ruta' || 
         !progreso.placa_seleccionada
     );
     
-    var placaActual = progreso.placa_seleccionada || '';
-    
     if (mostrarSelector) {
-        var options = '';
-        if (placasDisponibles.length > 0) {
-            options = '<option value="" disabled ' + (!placaActual ? 'selected' : '') + '>-- Selecciona una placa --</option>';
-            for (var i = 0; i < placasDisponibles.length; i++) {
-                var placa = placasDisponibles[i];
-                if (placa.indexOf('NO HAY PLACAS') === -1) {
-                    options += '<option value="' + placa.replace(/"/g, '&quot;') + '" ' + 
-                              (placaActual === placa ? 'selected' : '') + '>' + placa + '</option>';
-                }
+        // Generar opciones del select
+        var options = '<option value="" disabled ' + (!placaActual ? 'selected' : '') + '>-- Selecciona una placa --</option>';
+        
+        for (var i = 0; i < placasDisponibles.length; i++) {
+            var placa = placasDisponibles[i];
+            if (placa.indexOf('NO HAY PLACAS') === -1) {
+                var selected = (placaActual === placa) ? 'selected' : '';
+                options += '<option value="' + placa.replace(/"/g, '&quot;') + '" ' + selected + '>' + placa + '</option>';
             }
         }
         
         container.innerHTML = `
             <div class="placa-container">
                 <label class="placa-label">🚛 Selecciona la placa del vehículo</label>
-                <div class="placa-input-container">
-                    <select id="placaSelect" class="placa-select" style="width:100%; padding:14px 18px; border:2px solid #e5e5e5; border-radius:15px; font-size:1.1rem; background:white; appearance:auto;" required>
-                        ${options}
-                    </select>
-                </div>
-                ${placasDisponibles.length === 0 ? '<div style="color:#c62828; margin-top:10px;">⚠️ No hay placas registradas para ' + ciudadUsuario + '</div>' : ''}
+                <select id="placaSelect" class="placa-select" required>
+                    ${options}
+                </select>
+                ${placasDisponibles.length === 0 || placasDisponibles[0].indexOf('NO HAY PLACAS') !== -1 ? 
+                    '<div style="color:#c62828; margin-top:10px;">⚠️ No hay placas registradas para ' + ciudadUsuario + '</div>' : ''}
             </div>
         `;
     } else {
@@ -826,60 +795,51 @@ function actualizarSelectorPlaca(progreso) {
 }
 
 // ============================================
-// FUNCIONES GPS
+// ACTUALIZAR BOTONES - ¡AHORA SÍ VISIBLES!
 // ============================================
 
-function obtenerGPS() {
-    var indicator = document.getElementById('gpsIndicator');
+function actualizarBotones(progreso) {
+    var container = document.getElementById('botonesContainer');
+    if (!container) return;
     
-    if (!navigator.geolocation) {
-        indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">📍 GPS: No soportado</span>';
-        return;
+    var esCompletado = esTrackingCompletado(progreso);
+    
+    if (esCompletado) {
+        // CASO: VIAJE COMPLETADO - Botón marcar deshabilitado + botón reinicio
+        container.innerHTML = `
+            <button class="btn-marcar" disabled>
+                ✅ TRACKING COMPLETADO
+            </button>
+            <button onclick="reiniciarTracking()" class="btn-reinicio">
+                🔄 INICIAR NUEVO VIAJE
+            </button>
+        `;
+    } else {
+        // CASO: VIAJE EN PROGRESO - Botón marcar habilitado
+        container.innerHTML = `
+            <button onclick="marcarEstado()" class="btn-marcar" id="btnMarcar">
+                MARCAR ESTADO
+            </button>
+        `;
     }
-    
-    indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">📍 GPS: Obteniendo ubicación...</span>';
-    
-    navigator.geolocation.getCurrentPosition(
-        function(position) {
-            latitud = position.coords.latitude;
-            longitud = position.coords.longitude;
-            precision = position.coords.accuracy;
-            gpsActivo = true;
-            
-            indicator.innerHTML = '<span class="gps-pulse gps-pulse-active"></span><span class="gps-active">📍 GPS ACTIVO</span>';
-        },
-        function(error) {
-            gpsActivo = false;
-            latitud = null;
-            longitud = null;
-            precision = null;
-            
-            var mensaje = '';
-            switch(error.code) {
-                case error.PERMISSION_DENIED: mensaje = '📍 GPS: Permiso denegado'; break;
-                case error.POSITION_UNAVAILABLE: mensaje = '📍 GPS: No disponible'; break;
-                case error.TIMEOUT: mensaje = '📍 GPS: Tiempo agotado'; break;
-                default: mensaje = '📍 GPS: Error';
-            }
-            
-            indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">' + mensaje + '</span>';
-            
-            if (gpsIntentos < 3) {
-                gpsIntentos++;
-                setTimeout(obtenerGPS, 5000);
-            }
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
 }
 
 // ============================================
-// FUNCIÓN PRINCIPAL - MARCAR ESTADO
+// MARCAR ESTADO
 // ============================================
 
 function marcarEstado() {
-    var btn = document.getElementById('btnMarcar');
     var progreso = cargarProgreso();
+    
+    // Verificar si ya está completado
+    if (esTrackingCompletado(progreso)) {
+        alert('✅ Este viaje ya está completado. Inicia uno nuevo.');
+        actualizarBotones(progreso);
+        return;
+    }
+    
+    var btn = document.getElementById('btnMarcar');
+    if (btn) btn.disabled = true;
     
     // Obtener placa
     var placa = '';
@@ -894,48 +854,55 @@ function marcarEstado() {
         placa = select ? select.value : '';
         
         if (!placa) {
-            alert('⚠️ Por favor selecciona una placa');
+            alert('⚠️ Selecciona una placa');
             if (select) select.focus();
+            if (btn) btn.disabled = false;
             return;
         }
     } else {
         placa = progreso.placa_seleccionada || '';
     }
     
-    btn.disabled = true;
-    btn.innerHTML = '⏳ PROCESANDO...';
+    // Estado a marcar = ESTADO ACTUAL
+    var estadoAMarcar = progreso.estado_actual;
     
-    // 1. Actualizar progreso LOCALMENTE
-    var estadoActual = progreso.estado_actual;
-    var fechaAhora = new Date();
-    var fechaStr = fechaAhora.getFullYear() + '-' + 
-                   String(fechaAhora.getMonth() + 1).padStart(2, '0') + '-' +
-                   String(fechaAhora.getDate()).padStart(2, '0') + ' ' +
-                   String(fechaAhora.getHours()).padStart(2, '0') + ':' +
-                   String(fechaAhora.getMinutes()).padStart(2, '0') + ':' +
-                   String(fechaAhora.getSeconds()).padStart(2, '0');
+    // Fecha actual
+    var ahora = new Date();
+    var fechaStr = ahora.getFullYear() + '-' + 
+                   String(ahora.getMonth() + 1).padStart(2, '0') + '-' +
+                   String(ahora.getDate()).padStart(2, '0') + ' ' +
+                   String(ahora.getHours()).padStart(2, '0') + ':' +
+                   String(ahora.getMinutes()).padStart(2, '0') + ':' +
+                   String(ahora.getSeconds()).padStart(2, '0');
     
-    progreso.marcados[estadoActual] = fechaStr;
+    // 1. MARCAR ESTADO ACTUAL
+    progreso.marcados[estadoAMarcar] = fechaStr;
     
-    var keys = Object.keys(estadosDisponibles);
-    var i = keys.indexOf(estadoActual);
-    progreso.estado_actual = keys[i + 1] || estadoActual;
+    // 2. AVANZAR AL SIGUIENTE ESTADO
+    var siguienteEstado = obtenerSiguienteEstado(estadoAMarcar);
+    if (siguienteEstado) {
+        progreso.estado_actual = siguienteEstado;
+    }
     
-    if (estadoActual === 'salida_ruta' || estadoActual === 'retorno_ruta') {
+    // 3. Guardar placa si es necesario
+    if (estadoAMarcar === 'salida_ruta' || estadoAMarcar === 'retorno_ruta') {
         if (placa && placa.indexOf('NO HAY PLACAS') === -1) {
             progreso.placa_seleccionada = placa;
         }
     }
     
-    // 2. Guardar en localStorage (celular)
+    // 4. Guardar en localStorage
     guardarProgreso(progreso);
     
-    // 3. Enviar a la base de datos
-    var formData = 'estado=' + estadoActual + 
+    // 5. ACTUALIZAR UI INMEDIATAMENTE
+    actualizarUI(progreso);
+    
+    // 6. Enviar a BD
+    var formData = 'estado=' + encodeURIComponent(estadoAMarcar) + 
                    '&placa=' + encodeURIComponent(placa) +
                    '&fecha=' + encodeURIComponent(fechaStr);
     
-    if (latitud && longitud) {
+    if (typeof latitud !== 'undefined' && latitud && longitud) {
         formData += '&latitud=' + latitud + '&longitud=' + longitud + '&precision=' + precision;
     }
     
@@ -946,26 +913,84 @@ function marcarEstado() {
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
-        if (navigator.vibrate) { navigator.vibrate(60); }
-        btn.innerHTML = '✅ ¡MARCADO EXITOSO!';
-        
-        // Actualizar UI
-        actualizarUI(progreso);
-        
-        setTimeout(function() { 
-            btn.disabled = false;
-            btn.innerHTML = 'MARCAR ESTADO';
-        }, 800);
+        if (navigator.vibrate) navigator.vibrate(60);
+        console.log('✅ Marcación guardada en BD');
     })
     .catch(function(error) {
-        console.error('Error:', error);
-        alert('❌ Error de conexión. La marcación se guardó en el celular y se enviará cuando haya conexión.');
-        btn.disabled = false;
-        btn.innerHTML = 'MARCAR ESTADO (OFFLINE)';
-        
-        // Aún así actualizar UI
-        actualizarUI(progreso);
+        console.log('⚠️ Modo offline - Marcación guardada en celular');
     });
+}
+
+// ============================================
+// REINICIAR TRACKING
+// ============================================
+
+function reiniciarTracking() {
+    if (confirm('✅ ¿Iniciar un nuevo viaje?')) {
+        var nuevoProgreso = {
+            estado_actual: 'salida_ruta',
+            marcados: {},
+            placa_seleccionada: null,
+            fecha_inicio: new Date().toISOString(),
+            fecha_fin: new Date().toISOString()
+        };
+        
+        guardarProgreso(nuevoProgreso);
+        actualizarUI(nuevoProgreso);
+    }
+}
+
+// ============================================
+// GPS
+// ============================================
+
+var gpsActivo = false;
+var latitud = null;
+var longitud = null;
+var precision = null;
+
+function obtenerGPS() {
+    var indicator = document.getElementById('gpsIndicator');
+    if (!indicator) return;
+    
+    if (!navigator.geolocation) {
+        indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">📍 GPS: No soportado</span>';
+        return;
+    }
+    
+    navigator.geolocation.getCurrentPosition(
+        function(position) {
+            latitud = position.coords.latitude;
+            longitud = position.coords.longitude;
+            precision = position.coords.accuracy;
+            gpsActivo = true;
+            indicator.innerHTML = '<span class="gps-pulse gps-pulse-active"></span><span class="gps-active">📍 GPS ACTIVO</span>';
+        },
+        function(error) {
+            gpsActivo = false;
+            var mensaje = '📍 GPS: ';
+            switch(error.code) {
+                case error.PERMISSION_DENIED: mensaje += 'Permiso denegado'; break;
+                case error.POSITION_UNAVAILABLE: mensaje += 'No disponible'; break;
+                case error.TIMEOUT: mensaje += 'Tiempo agotado'; break;
+                default: mensaje += 'Error';
+            }
+            indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">' + mensaje + '</span>';
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+}
+
+// ============================================
+// CERRAR SESIÓN
+// ============================================
+
+function cerrarSesion() {
+    if (confirm('¿Cerrar sesión?')) {
+        document.cookie = 'remember_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        document.cookie = 'remember_user=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        window.location.href = 'login.php';
+    }
 }
 
 // ============================================
@@ -973,38 +998,33 @@ function marcarEstado() {
 // ============================================
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Cargar progreso y actualizar UI
+    console.log('🚀 Iniciando dashboard...');
+    
+    // 1. Cargar progreso
     var progreso = cargarProgreso();
+    
+    // 2. Validar estado actual
+    if (!progreso.estado_actual || keysEstados.indexOf(progreso.estado_actual) === -1) {
+        progreso.estado_actual = 'salida_ruta';
+    }
+    
+    // 3. ACTUALIZAR UI - ESTO MUESTRA LOS BOTONES
     actualizarUI(progreso);
     
-    // Iniciar GPS
+    // 4. Iniciar GPS
     obtenerGPS();
     
-    // Reintentar GPS cada 30 segundos
+    // 5. Auto-respaldo
     setInterval(function() {
-        if (!gpsActivo) {
-            obtenerGPS();
-        }
+        var p = cargarProgreso();
+        guardarProgreso(p);
     }, 30000);
     
-    // Auto-respaldo cada 30 segundos
+    // 6. Reintentar GPS
     setInterval(function() {
-        var progreso = cargarProgreso();
-        guardarProgreso(progreso);
+        if (!gpsActivo) obtenerGPS();
     }, 30000);
-    
-    console.log('🚀 App iniciada - Progreso guardado en el celular');
 });
-
-// Cerrar sesión
-function cerrarSesion() {
-    if (confirm('¿Cerrar sesión?')) {
-        // NO borramos localStorage aquí para que cuando vuelva a iniciar sesión, recupere su progreso
-        document.cookie = 'remember_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        document.cookie = 'remember_user=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-        window.location.href = 'login.php';
-    }
-}
 
 // Ajuste de altura
 function ajustarAltura() {
