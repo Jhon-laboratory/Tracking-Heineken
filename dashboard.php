@@ -85,7 +85,7 @@ $reiniciado = verificarYReiniciar();
 
 // Obtener placas SOLO de la ciudad del usuario
 function obtenerPlacasPorCiudad($ciudad) {
-    if (empty($ciudad)) return [];
+    if (empty($ciudad)) return array();
     
     $database = new Database();
     $conn = $database->getConnection();
@@ -97,7 +97,7 @@ function obtenerPlacasPorCiudad($ciudad) {
     $params = array($ciudad);
     $stmt = sqlsrv_query($conn, $query, $params);
     
-    $placas = [];
+    $placas = array();
     if ($stmt !== false) {
         while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
             $placas[] = $row['placa'];
@@ -111,16 +111,16 @@ $ciudad_usuario = $_SESSION['user_ciudad'] ?? '';
 $placas_disponibles = obtenerPlacasPorCiudad($ciudad_usuario);
 
 if (empty($placas_disponibles)) {
-    $placas_disponibles = ['NO HAY PLACAS DISPONIBLES PARA ' . strtoupper($ciudad_usuario)];
+    $placas_disponibles = array('NO HAY PLACAS DISPONIBLES PARA ' . strtoupper($ciudad_usuario));
 }
 
 // PROCESAR MARCADOR
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['estado'])) {
     $estado = $_POST['estado'];
     $placa = $_POST['placa'] ?? '';
-    $latitud = $_POST['latitud'] ?? null;
-    $longitud = $_POST['longitud'] ?? null;
-    $precision_gps = $_POST['precision'] ?? null;
+    $latitud = isset($_POST['latitud']) ? $_POST['latitud'] : null;
+    $longitud = isset($_POST['longitud']) ? $_POST['longitud'] : null;
+    $precision_gps = isset($_POST['precision']) ? $_POST['precision'] : null;
     
     $p = $_SESSION['progreso'];
     $keys = array_keys($estados);
@@ -129,17 +129,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['estado'])) {
     if ($estado === $keys[$i]) {
         // Actualizar sesión
         $p['marcados'][$estado] = date('Y-m-d H:i:s');
-        $p['estado_actual'] = $keys[$i+1] ?? $estado;
+        $p['estado_actual'] = isset($keys[$i+1]) ? $keys[$i+1] : $estado;
         
         if ($estado === 'salida_ruta' || $estado === 'retorno_ruta') {
-            if (!empty($placa) && !str_contains($placa, 'NO HAY PLACAS')) {
+            if (!empty($placa) && strpos($placa, 'NO HAY PLACAS') === false) {
                 $p['placa_seleccionada'] = $placa;
             }
         }
         
         $_SESSION['progreso'] = $p;
         
-        // Guardar en base de datos la marcación (CON GPS si está disponible)
+        // Guardar en base de datos la marcación
         $database = new Database();
         $conn = $database->getConnection();
         
@@ -171,7 +171,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['estado'])) {
         }
     }
 
-    echo json_encode(['success' => true, 'progreso' => $p]);
+    echo json_encode(array('success' => true, 'progreso' => $p));
     exit;
 }
 
@@ -606,7 +606,7 @@ button:disabled {
     <div>
         <h1>RANSA</h1>
         
-        <!-- INDICADOR GPS - SOLO VISUAL -->
+        <!-- INDICADOR GPS - PHP 7.4 compatible -->
         <div id="gpsIndicator" class="gps-indicator">
             <span class="gps-pulse gps-pulse-inactive"></span>
             <span class="gps-inactive">📍 GPS: Obteniendo ubicación...</span>
@@ -696,19 +696,19 @@ button:disabled {
 
 <script>
 // Variables GPS
-let gpsActivo = false;
-let latitud = null;
-let longitud = null;
-let precision = null;
-let gpsIntentos = 0;
+var gpsActivo = false;
+var latitud = null;
+var longitud = null;
+var precision = null;
+var gpsIntentos = 0;
 
-// Lista de placas disponibles
-const placasDisponibles = <?= json_encode($placas_disponibles) ?>;
-let placaSeleccionada = '<?= $placa_actual ?>';
+// Lista de placas disponibles - PHP 7.4 compatible
+var placasDisponibles = <?= json_encode($placas_disponibles) ?>;
+var placaSeleccionada = '<?= $placa_actual ?>';
 
-// Función para obtener ubicación GPS (siempre intenta, no es restrictivo)
+// Función para obtener ubicación GPS
 function obtenerGPS() {
-    const indicator = document.getElementById('gpsIndicator');
+    var indicator = document.getElementById('gpsIndicator');
     
     if (!navigator.geolocation) {
         indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">📍 GPS: No soportado</span>';
@@ -735,7 +735,7 @@ function obtenerGPS() {
             longitud = null;
             precision = null;
             
-            let mensaje = '';
+            var mensaje = '';
             switch(error.code) {
                 case error.PERMISSION_DENIED:
                     mensaje = '📍 GPS: Permiso denegado';
@@ -750,7 +750,7 @@ function obtenerGPS() {
                     mensaje = '📍 GPS: Error';
             }
             
-            indicator.innerHTML = `<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">${mensaje}</span>`;
+            indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">' + mensaje + '</span>';
             
             // Reintentar hasta 3 veces
             if (gpsIntentos < 3) {
@@ -766,31 +766,41 @@ function obtenerGPS() {
     );
 }
 
-// Función para filtrar placas
+// Función para filtrar placas - PHP 7.4 compatible
 function filtrarPlacas(busqueda) {
     if (!placasDisponibles.length) return [];
     if (!busqueda) return placasDisponibles.slice(0, 5);
     
     busqueda = busqueda.toUpperCase();
-    return placasDisponibles.filter(placa => 
-        placa.toUpperCase().includes(busqueda)
-    ).slice(0, 5);
+    var filtradas = [];
+    
+    for (var i = 0; i < placasDisponibles.length; i++) {
+        var placa = placasDisponibles[i];
+        if (placa.toUpperCase().indexOf(busqueda) > -1) {
+            filtradas.push(placa);
+        }
+        if (filtradas.length >= 5) break;
+    }
+    
+    return filtradas;
 }
 
 // Mostrar sugerencias
 function mostrarSugerencias() {
-    const input = document.getElementById('placaInput');
-    const sugerenciasDiv = document.getElementById('sugerencias');
+    var input = document.getElementById('placaInput');
+    var sugerenciasDiv = document.getElementById('sugerencias');
     
     if (!input || !sugerenciasDiv) return;
     
-    const busqueda = input.value;
-    const filtradas = filtrarPlacas(busqueda);
+    var busqueda = input.value;
+    var filtradas = filtrarPlacas(busqueda);
     
-    if (filtradas.length > 0 && !filtradas[0].includes('NO HAY PLACAS')) {
-        sugerenciasDiv.innerHTML = filtradas.map(placa => 
-            `<div class="sugerencia-item" onclick="seleccionarPlaca('${placa.replace(/'/g, "\\'")}')">${placa}</div>`
-        ).join('');
+    if (filtradas.length > 0 && filtradas[0].indexOf('NO HAY PLACAS') === -1) {
+        var html = '';
+        for (var i = 0; i < filtradas.length; i++) {
+            html += '<div class="sugerencia-item" onclick="seleccionarPlaca(\'' + filtradas[i].replace(/'/g, "\\'") + '\')">' + filtradas[i] + '</div>';
+        }
+        sugerenciasDiv.innerHTML = html;
         sugerenciasDiv.style.display = 'block';
     } else {
         sugerenciasDiv.style.display = 'none';
@@ -799,7 +809,7 @@ function mostrarSugerencias() {
 
 // Seleccionar placa
 function seleccionarPlaca(placa) {
-    const input = document.getElementById('placaInput');
+    var input = document.getElementById('placaInput');
     if (input) {
         input.value = placa;
         placaSeleccionada = placa;
@@ -809,8 +819,8 @@ function seleccionarPlaca(placa) {
 
 // Ocultar sugerencias al hacer clic fuera
 document.addEventListener('click', function(event) {
-    const input = document.getElementById('placaInput');
-    const sugerencias = document.getElementById('sugerencias');
+    var input = document.getElementById('placaInput');
+    var sugerencias = document.getElementById('sugerencias');
     if (input && sugerencias && !input.contains(event.target) && !sugerencias.contains(event.target)) {
         sugerencias.style.display = 'none';
     }
@@ -818,11 +828,11 @@ document.addEventListener('click', function(event) {
 
 // Función para marcar estado con GPS
 function marcarEstadoConGPS(estado) {
-    const btn = document.getElementById('btnMarcar');
-    let placa = '';
+    var btn = document.getElementById('btnMarcar');
+    var placa = '';
     
     <?php if ($mostrar_selector_placa): ?>
-    const inputPlaca = document.getElementById('placaInput');
+    var inputPlaca = document.getElementById('placaInput');
     placa = inputPlaca ? inputPlaca.value.trim() : '';
     
     if (!placa) {
@@ -831,9 +841,19 @@ function marcarEstadoConGPS(estado) {
         return;
     }
     
-    if (placasDisponibles.length > 0 && !placasDisponibles.includes(placa) && !placa.includes('NO HAY PLACAS')) {
-        alert('⚠️ La placa ingresada no está registrada. Por favor selecciona de la lista.');
-        return;
+    // Validar placa - PHP 7.4 compatible
+    if (placasDisponibles.length > 0 && placasDisponibles[0].indexOf('NO HAY PLACAS') === -1) {
+        var placaValida = false;
+        for (var i = 0; i < placasDisponibles.length; i++) {
+            if (placasDisponibles[i] === placa) {
+                placaValida = true;
+                break;
+            }
+        }
+        if (!placaValida) {
+            alert('⚠️ La placa ingresada no está registrada. Por favor selecciona de la lista.');
+            return;
+        }
     }
     <?php else: ?>
     placa = '<?= $placa_actual ?>';
@@ -842,8 +862,8 @@ function marcarEstadoConGPS(estado) {
     btn.disabled = true;
     btn.innerHTML = '⏳ PROCESANDO...';
     
-    // Construir datos - SIEMPRE incluye GPS si está disponible
-    let formData = 'estado=' + estado + '&placa=' + encodeURIComponent(placa);
+    // Construir datos
+    var formData = 'estado=' + estado + '&placa=' + encodeURIComponent(placa);
     
     if (latitud && longitud) {
         formData += '&latitud=' + latitud + '&longitud=' + longitud + '&precision=' + precision;
@@ -854,13 +874,13 @@ function marcarEstadoConGPS(estado) {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: formData
     })
-    .then(r => r.json())
-    .then(d => {
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
         if (navigator.vibrate) { navigator.vibrate(60); }
         btn.innerHTML = '✅ ¡MARCADO EXITOSO!';
-        setTimeout(() => { location.reload(); }, 800);
+        setTimeout(function() { location.reload(); }, 800);
     })
-    .catch(error => {
+    .catch(function(error) {
         console.error('Error:', error);
         alert('Error al marcar estado. Intenta nuevamente.');
         btn.disabled = false;
@@ -875,7 +895,7 @@ function reiniciarTracking() {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: 'reiniciar=1'
-        }).then(() => {
+        }).then(function() {
             location.reload();
         });
     }
@@ -892,7 +912,7 @@ function cerrarSesion() {
 
 // Event listeners
 document.addEventListener('DOMContentLoaded', function() {
-    const input = document.getElementById('placaInput');
+    var input = document.getElementById('placaInput');
     if (input) {
         input.addEventListener('input', mostrarSugerencias);
         input.addEventListener('focus', mostrarSugerencias);
@@ -901,11 +921,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Iniciar GPS al cargar la página
+    // Iniciar GPS
     obtenerGPS();
     
-    // Reintentar GPS cada 30 segundos si está inactivo
-    setInterval(() => {
+    // Reintentar GPS cada 30 segundos
+    setInterval(function() {
         if (!gpsActivo) {
             obtenerGPS();
         }
@@ -914,15 +934,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
 // Ajuste de altura
 function ajustarAltura() {
-    const vh = window.innerHeight;
-    document.documentElement.style.setProperty('--vh', `${vh}px`);
-    const container = document.querySelector('.container');
-    if (container) container.style.height = `${vh}px`;
+    var vh = window.innerHeight;
+    document.documentElement.style.setProperty('--vh', vh + 'px');
+    var container = document.querySelector('.container');
+    if (container) container.style.height = vh + 'px';
 }
 
 window.addEventListener('load', ajustarAltura);
 window.addEventListener('resize', ajustarAltura);
-window.addEventListener('orientationchange', setTimeout.bind(null, ajustarAltura, 100));
+window.addEventListener('orientationchange', function() { setTimeout(ajustarAltura, 100); });
 </script>
 
 </body>
