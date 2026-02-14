@@ -1,8 +1,8 @@
 <?php
 session_start();
 
-// Si ya está logueado y tiene el token persistente, redirigir al dashboard
-if (isset($_SESSION['user_id']) && isset($_COOKIE['remember_token'])) {
+// Si ya está logueado, redirigir al dashboard
+if (isset($_SESSION['placa'])) {
     header('Location: dashboard.php');
     exit;
 }
@@ -12,60 +12,41 @@ require_once 'conexion.php';
 $error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $usuario = $_POST['usuario'] ?? '';
-    $password = $_POST['password'] ?? '';
-    $recordar = isset($_POST['recordar']) ? true : false;
+    $placa = $_POST['placa'] ?? '';
     
-    $database = new Database();
-    $conn = $database->getConnection();
+    // Limpiar y estandarizar la placa (eliminar guiones, espacios, mayúsculas)
+    $placa_limpia = strtoupper(trim($placa));
+    $placa_limpia = str_replace(['-', ' ', '.'], '', $placa_limpia);
     
-    // Buscar usuario
-    $query = "SELECT id, nombre_completo, usuario, password, ciudad 
-              FROM DPL.externos.users_tracking 
-              WHERE usuario = ? AND activo = 1";
-    
-    $params = array($usuario);
-    $stmt = sqlsrv_query($conn, $query, $params);
-    
-    if ($stmt === false) {
-        $errors = sqlsrv_errors();
-        $error = "Error en la consulta";
-        error_log(print_r($errors, true));
+    if (empty($placa_limpia)) {
+        $error = 'Por favor ingrese una placa';
     } else {
-        $user = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC);
+        $database = new Database();
+        $conn = $database->getConnection();
         
-        if ($user) {
-            // Verificar contraseña
-            if (password_verify($password, $user['password'])) {
-                // Login exitoso
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['user_nombre'] = $user['nombre_completo'];
-                $_SESSION['user_usuario'] = $user['usuario'];
-                $_SESSION['user_ciudad'] = $user['ciudad'];
-                $_SESSION['login_time'] = time();
-                
-                // Actualizar último acceso
-                $update = "UPDATE DPL.externos.users_tracking SET ultimo_acceso = GETDATE() WHERE id = ?";
-                $params_update = array($user['id']);
-                sqlsrv_query($conn, $update, $params_update);
-                
-                // Generar token persistente (para "loguearse una sola vez")
-                if ($recordar) {
-                    $token = bin2hex(random_bytes(32));
-                    $expiry_days = 30; // 30 días
-                    
-                    // Guardar token en base de datos
-                    $token_sql = "UPDATE DPL.externos.users_tracking 
-                                 SET remember_token = ?, 
-                                     token_expiry = DATEADD(day, ?, GETDATE())
-                                 WHERE id = ?";
-                    $params_token = array($token, $expiry_days, $user['id']);
-                    sqlsrv_query($conn, $token_sql, $params_token);
-                    
-                    // Cookie persistente (30 días)
-                    setcookie('remember_token', $token, time() + (86400 * 30), '/', '', false, true);
-                    setcookie('remember_user', $user['id'], time() + (86400 * 30), '/', '', false, true);
-                }
+        // Fecha actual
+        $fecha_actual = date('Y-m-d');
+        
+        // Buscar la placa en la tabla plantillas_conductores para la fecha actual
+        $query = "SELECT id, nombre, placa, fecha_plantilla 
+                  FROM DPL.externos.plantillas_conductores 
+                  WHERE placa = ? AND fecha_plantilla = ? AND activo = 1";
+        
+        $params = array($placa_limpia, $fecha_actual);
+        $stmt = sqlsrv_query($conn, $query, $params);
+        
+        if ($stmt === false) {
+            $errors = sqlsrv_errors();
+            $error = "Error en la consulta";
+            error_log(print_r($errors, true));
+        } else {
+            $conductor = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC);
+            
+            if ($conductor) {
+                // Login exitoso - guardar datos del conductor en sesión
+                $_SESSION['placa'] = $conductor['placa'];
+                $_SESSION['nombre_conductor'] = $conductor['nombre'];
+                $_SESSION['fecha_ingreso'] = date('Y-m-d H:i:s');
                 
                 // Liberar recursos
                 sqlsrv_free_stmt($stmt);
@@ -73,13 +54,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: dashboard.php');
                 exit;
             } else {
-                $error = 'Contraseña incorrecta';
+                // Verificar si la placa existe pero en otra fecha
+                $query_otra_fecha = "SELECT fecha_plantilla 
+                                     FROM DPL.externos.plantillas_conductores 
+                                     WHERE placa = ? AND activo = 1
+                                     ORDER BY fecha_plantilla DESC";
+                
+                $stmt_otra = sqlsrv_query($conn, $query_otra_fecha, array($placa_limpia));
+                
+                if ($stmt_otra !== false && sqlsrv_has_rows($stmt_otra)) {
+                    $otra = sqlsrv_fetch_array($stmt_otra, SQLSRV_FETCH_ASSOC);
+                    $fecha_otra = $otra['fecha_plantilla']->format('Y-m-d');
+                    $error = "La placa {$placa_limpia} está registrada para la fecha " . date('d/m/Y', strtotime($fecha_otra)) . ", no para hoy.";
+                    sqlsrv_free_stmt($stmt_otra);
+                } else {
+                    $error = 'Placa no encontrada o no activa para la fecha actual';
+                }
             }
-        } else {
-            $error = 'Usuario no encontrado o inactivo';
+            
+            sqlsrv_free_stmt($stmt);
         }
-        
-        sqlsrv_free_stmt($stmt);
     }
 }
 ?>
@@ -88,9 +82,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
-    <title>RANSA - Login</title>
+    <title>RANSA - Login por Placa</title>
     <style>
-        /* Mismos estilos que te di anteriormente */
+        /* Reset completo */
         * {
             margin: 0;
             padding: 0;
@@ -107,103 +101,120 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         body {
             font-family: 'Segoe UI', sans-serif;
             background: var(--fondo);
+            min-height: 100vh;
+            min-height: 100dvh;
             display: flex;
-            justify-content: center;
             align-items: center;
-            height: 100vh;
-            height: 100dvh;
-            width: 100vw;
-            width: 100dvw;
+            justify-content: center;
+            padding: 0;
+            margin: 0;
         }
         
+        /* Contenedor que ocupa toda la pantalla */
         .login-container {
             width: 100%;
-            max-width: 400px;
-            padding: 20px;
+            min-height: 100vh;
+            min-height: 100dvh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
         }
         
+        /* Tarjeta que ocupa toda la pantalla */
         .login-card {
+            width: 100%;
+            min-height: 100vh;
+            min-height: 100dvh;
             background: white;
-            border-radius: 28px;
-            padding: 30px 25px;
-            box-shadow: 0 15px 30px rgba(0,0,0,.06);
-            animation: pop .4s ease;
+            padding: 40px 30px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            box-shadow: none;
+            border-radius: 0;
+            animation: none;
+            position: relative;
+            overflow-y: auto;
+        }
+        
+        /* Línea decorativa superior */
+        .login-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--verde), var(--naranja));
         }
         
         h1 {
             color: var(--verde);
-            font-size: 2.5rem;
+            font-size: 3.5rem;
             text-align: center;
-            margin-bottom: 5px;
-            letter-spacing: 1.5px;
+            margin-bottom: 10px;
+            letter-spacing: 2px;
+            font-weight: 700;
         }
         
         .subtitle {
             text-align: center;
             color: #777;
-            font-size: 0.9rem;
+            font-size: 1rem;
             margin-bottom: 30px;
             border-bottom: 1.5px solid #f0f0f0;
-            padding-bottom: 15px;
+            padding-bottom: 20px;
         }
         
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 25px;
+            max-width: 400px;
+            width: 100%;
+            margin-left: auto;
+            margin-right: auto;
         }
         
         label {
             display: block;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
             color: #555;
             font-weight: 600;
-            font-size: 0.9rem;
+            font-size: 1rem;
         }
         
-        input[type="text"],
-        input[type="password"] {
+        input[type="text"] {
             width: 100%;
-            padding: 15px 18px;
+            padding: 18px 20px;
             border: 2px solid #e5e5e5;
             border-radius: 15px;
-            font-size: 1rem;
+            font-size: 1.2rem;
             transition: all 0.2s;
             background: #fafafa;
+            text-transform: uppercase;
         }
         
-        input[type="text"]:focus,
-        input[type="password"]:focus {
+        input[type="text"]:focus {
             border-color: var(--verde);
             outline: none;
             background: white;
             box-shadow: 0 0 0 4px rgba(0,154,63,0.1);
         }
         
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            margin: 20px 0 25px;
-        }
-        
-        input[type="checkbox"] {
-            width: 22px;
-            height: 22px;
-            margin-right: 12px;
-            accent-color: var(--verde);
-            cursor: pointer;
-        }
-        
-        .checkbox-group label {
-            margin-bottom: 0;
-            cursor: pointer;
-            font-weight: normal;
+        input[type="text"]::placeholder {
+            text-transform: none;
+            font-size: 1rem;
         }
         
         button {
             width: 100%;
-            padding: 16px;
+            max-width: 400px;
+            margin: 0 auto;
+            display: block;
+            padding: 18px;
             border: none;
             border-radius: 22px;
-            font-size: 1.2rem;
+            font-size: 1.3rem;
             font-weight: 800;
             background: var(--verde);
             color: white;
@@ -228,21 +239,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .error {
             background: #ffebee;
             color: #c62828;
-            padding: 12px 18px;
+            padding: 15px 20px;
             border-radius: 12px;
-            margin-bottom: 20px;
-            font-size: 0.95rem;
+            margin-bottom: 25px;
+            font-size: 1rem;
             border-left: 5px solid #c62828;
             display: <?= $error ? 'block' : 'none' ?>;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+            width: 100%;
         }
         
         .info-text {
-            margin-top: 25px;
+            margin-top: 30px;
             text-align: center;
             color: #888;
-            font-size: 0.8rem;
-            padding-top: 15px;
+            font-size: 0.9rem;
+            padding-top: 20px;
             border-top: 1.5px solid #f0f0f0;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+            width: 100%;
+        }
+        
+        .fecha-info {
+            text-align: center;
+            color: var(--naranja);
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+            font-weight: 600;
+            max-width: 400px;
+            margin-left: auto;
+            margin-right: auto;
+            width: 100%;
+        }
+        
+        /* Para pantallas muy pequeñas */
+        @media (max-width: 480px) {
+            h1 {
+                font-size: 2.8rem;
+            }
+            
+            .login-card {
+                padding: 30px 20px;
+            }
+            
+            input[type="text"] {
+                padding: 15px 18px;
+                font-size: 1.1rem;
+            }
+            
+            button {
+                padding: 15px;
+                font-size: 1.2rem;
+            }
+        }
+        
+        /* Para pantallas muy grandes */
+        @media (min-width: 1200px) {
+            h1 {
+                font-size: 4rem;
+            }
+            
+            .login-card {
+                padding: 60px 40px;
+            }
         }
         
         @keyframes pop {
@@ -254,41 +317,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <body>
     <div class="login-container">
         <div class="login-card">
-            <h1>RANSA</h1>
-            <div class="subtitle">Sistema de Rastreo</div>
-            
-            <div class="error">
-                <?= htmlspecialchars($error) ?>
+            <div style="max-width: 400px; width: 100%; margin: 0 auto;">
+                <h1>RANSA</h1>
+                <div class="subtitle">Sistema de Rastreo</div>
+                
+                <div class="fecha-info">
+                    <i class="fas fa-calendar-alt"></i> Hoy: <?= date('d/m/Y') ?>
+                </div>
+                
+                <div class="error">
+                    <?= htmlspecialchars($error) ?>
+                </div>
+                
+                <form method="POST" action="">
+                    <div class="form-group">
+                        <label>Placa del vehículo</label>
+                        <input type="text" name="placa" placeholder="Ej: ABC1234" value="<?= isset($_POST['placa']) ? htmlspecialchars($_POST['placa']) : '' ?>" required autofocus>
+                    </div>
+                    
+                    <button type="submit">INGRESAR</button>
+                    
+                    <div class="info-text">
+                        Acceso solo para conductores con placa registrada en la fecha actual
+                    </div>
+                </form>
             </div>
-            
-            <form method="POST" action="">
-                <div class="form-group">
-                    <label>Usuario</label>
-                    <input type="text" name="usuario" placeholder="Ingresa tu usuario" required autofocus>
-                </div>
-                
-                <div class="form-group">
-                    <label>Contraseña</label>
-                    <input type="password" name="password" placeholder="Ingresa tu contraseña" required>
-                </div>
-                
-                <div class="checkbox-group">
-                    <input type="checkbox" id="recordar" name="recordar" checked>
-                    <label for="recordar">Mantenerme conectado (no pedir login nuevamente)</label>
-                </div>
-                
-                <button type="submit">INGRESAR</button>
-                
-                <div class="info-text">
-                    Acceso solo para personal autorizado
-                </div>
-            </form>
         </div>
     </div>
     
     <script>
-        // Auto-focus en el campo de usuario
-        document.querySelector('input[name="usuario"]').focus();
+        // Auto-focus en el campo de placa
+        document.querySelector('input[name="placa"]').focus();
+        
+        // Convertir a mayúsculas mientras escribe
+        document.querySelector('input[name="placa"]').addEventListener('input', function() {
+            this.value = this.value.toUpperCase();
+        });
         
         // Prevenir zoom en inputs en iOS
         document.querySelectorAll('input').forEach(input => {
@@ -297,5 +361,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             });
         });
     </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </body>
 </html>
