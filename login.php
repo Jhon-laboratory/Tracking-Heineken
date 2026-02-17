@@ -54,22 +54,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: dashboard.php');
                 exit;
             } else {
-                // Verificar si la placa existe pero en otra fecha
-                $query_otra_fecha = "SELECT fecha_plantilla 
-                                     FROM DPL.externos.plantillas_conductores 
-                                     WHERE placa = ? AND activo = 1
-                                     ORDER BY fecha_plantilla DESC";
-                
-                $stmt_otra = sqlsrv_query($conn, $query_otra_fecha, array($placa_limpia));
-                
-                if ($stmt_otra !== false && sqlsrv_has_rows($stmt_otra)) {
-                    $otra = sqlsrv_fetch_array($stmt_otra, SQLSRV_FETCH_ASSOC);
-                    $fecha_otra = $otra['fecha_plantilla']->format('Y-m-d');
-                    $error = "La placa {$placa_limpia} está registrada para la fecha " . date('d/m/Y', strtotime($fecha_otra)) . ", no para hoy.";
-                    sqlsrv_free_stmt($stmt_otra);
-                } else {
-                    $error = 'Placa no encontrada o no activa para la fecha actual';
-                }
+                // Mensaje simple - placa no registrada para hoy
+                $error = 'Placa no registrada para la fecha actual';
             }
             
             sqlsrv_free_stmt($stmt);
@@ -244,7 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             margin-bottom: 25px;
             font-size: 1rem;
             border-left: 5px solid #c62828;
-            display: <?= $error ? 'block' : 'none' ?>;
+            display: <?php echo $error ? 'block' : 'none'; ?>;
             max-width: 400px;
             margin-left: auto;
             margin-right: auto;
@@ -307,11 +293,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 padding: 60px 40px;
             }
         }
-        
-        @keyframes pop {
-            from{transform: scale(.95); opacity: .7}
-            to{transform: scale(1); opacity: 1}
-        }
     </style>
 </head>
 <body>
@@ -322,17 +303,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <div class="subtitle">Sistema de Rastreo</div>
                 
                 <div class="fecha-info">
-                    <i class="fas fa-calendar-alt"></i> Hoy: <?= date('d/m/Y') ?>
+                    <i class="fas fa-calendar-alt"></i> Hoy: <?php echo date('d/m/Y'); ?>
                 </div>
                 
                 <div class="error">
-                    <?= htmlspecialchars($error) ?>
+                    <?php echo htmlspecialchars($error); ?>
                 </div>
                 
                 <form method="POST" action="">
                     <div class="form-group">
                         <label>Placa del vehículo</label>
-                        <input type="text" name="placa" placeholder="Ej: ABC1234" value="<?= isset($_POST['placa']) ? htmlspecialchars($_POST['placa']) : '' ?>" required autofocus>
+                        <input type="text" name="placa" placeholder="Ej: ABC1234" value="<?php echo isset($_POST['placa']) ? htmlspecialchars($_POST['placa']) : ''; ?>" required autofocus>
                     </div>
                     
                     <button type="submit">INGRESAR</button>

@@ -491,11 +491,11 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
         }
 
         .action-button.blue {
-            background: linear-gradient(135deg, #3498db, #2980b9);
+            background: linear-gradient(135deg, #606061, #606061);
         }
 
         .action-button.purple {
-            background: linear-gradient(135deg, #F39200, #e08500);
+            background: linear-gradient(135deg, #1b7c03, #1b7c03);
         }
 
         .action-label {
@@ -524,11 +524,11 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
         }
 
         .action-label.blue {
-            background-color: #3498db;
+            background-color: #606061;
         }
 
         .action-label.purple {
-            background-color: #F39200;
+            background-color: #1b7c03;
         }
 
         /* Tooltip mejorado */
@@ -1181,6 +1181,15 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
     </style>
 </head>
 <body>
+    <!-- Botones flotantes en las esquinas - MODIFICADO CON BOTÓN MONITOR -->
+    <div class="floating-buttons">
+        
+        <!-- NUEVO BOTÓN MONITOR -->
+        <div class="floating-button right" onclick="window.location.href='monitor.php'">
+            <i class="fas fa-chart-line"></i> Monitor
+        </div>
+    </div>
+
     <!-- Modal de confirmación -->
     <div class="modal-overlay" id="confirmModal">
         <div class="modal-content">
@@ -1256,6 +1265,8 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
             </button>
             <div class="action-label tertiary">Cancelar</div>
         </div>
+        
+        
     </div>
 
     <div class="container">
