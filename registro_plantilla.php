@@ -491,11 +491,11 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
         }
 
         .action-button.blue {
-            background: linear-gradient(135deg, #3498db, #2980b9);
+            background: linear-gradient(135deg, #7f8c8d, #7f8c8d);
         }
 
         .action-button.purple {
-            background: linear-gradient(135deg, #F39200, #e08500);
+            background: linear-gradient(135deg, #009A3F, #009A3F);
         }
 
         .action-label {
@@ -524,11 +524,11 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
         }
 
         .action-label.blue {
-            background-color: #3498db;
+            background-color: #7f8c8d;
         }
 
         .action-label.purple {
-            background-color: #F39200;
+            background-color: #009A3F;
         }
 
         /* Tooltip mejorado */
@@ -1267,14 +1267,7 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
             <div class="action-label tertiary">Cancelar</div>
         </div>
         
-        <!-- Botón Monitor (siempre visible) -->
-        <div class="action-item">
-            <a href="monitor.php" class="action-button secondary" style="text-decoration: none;">
-                <i class="fas fa-chart-line"></i>
-                <div class="tooltip">Ver monitor de placas</div>
-            </a>
-            <div class="action-label secondary">Monitor</div>
-        </div>
+        
     </div>
 
     <div class="container">
