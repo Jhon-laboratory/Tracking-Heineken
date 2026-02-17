@@ -1,6 +1,6 @@
 <?php
 // ============================================
-// REGISTRO DE PLANTILLAS - VERSIÓN CON DISEÑO MEJORADO
+// REGISTRO DE PLANTILLAS - VERSIÓN CON PHPSPREADSHEET
 // PLACAS SE GUARDAN SIN GUIONES NI ESPACIOS (ABC1234)
 // CON BOTONES PARA ELIMINAR REGISTROS ANTES DE CARGAR
 // Y BOTONES FLOTANTES SIEMPRE VISIBLES EN DERECHA
@@ -491,11 +491,11 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
         }
 
         .action-button.blue {
-            background: linear-gradient(135deg, #606061, #606061);
+            background: linear-gradient(135deg, #3498db, #2980b9);
         }
 
         .action-button.purple {
-            background: linear-gradient(135deg, #1b7c03, #1b7c03);
+            background: linear-gradient(135deg, #F39200, #e08500);
         }
 
         .action-label {
@@ -524,11 +524,11 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
         }
 
         .action-label.blue {
-            background-color: #606061;
+            background-color: #3498db;
         }
 
         .action-label.purple {
-            background-color: #1b7c03;
+            background-color: #F39200;
         }
 
         /* Tooltip mejorado */
@@ -1181,10 +1181,11 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
     </style>
 </head>
 <body>
-    <!-- Botones flotantes en las esquinas - MODIFICADO CON BOTÓN MONITOR -->
+    <!-- Botones flotantes en las esquinas -->
     <div class="floating-buttons">
-        
-        <!-- NUEVO BOTÓN MONITOR -->
+        <div class="floating-button left" onclick="window.location.href='dashboard.php'">
+            <i class="fas fa-tachometer-alt"></i> Dashboard
+        </div>
         <div class="floating-button right" onclick="window.location.href='monitor.php'">
             <i class="fas fa-chart-line"></i> Monitor
         </div>
@@ -1266,7 +1267,14 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
             <div class="action-label tertiary">Cancelar</div>
         </div>
         
-        
+        <!-- Botón Monitor (siempre visible) -->
+        <div class="action-item">
+            <a href="monitor.php" class="action-button secondary" style="text-decoration: none;">
+                <i class="fas fa-chart-line"></i>
+                <div class="tooltip">Ver monitor de placas</div>
+            </a>
+            <div class="action-label secondary">Monitor</div>
+        </div>
     </div>
 
     <div class="container">
