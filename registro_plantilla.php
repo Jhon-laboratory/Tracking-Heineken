@@ -1,28 +1,38 @@
 <?php
+declare(strict_types=1); // Tipado estricto para PHP 8.2
+
 // ============================================
-// REGISTRO DE PLANTILLAS - VERSIÓN CON PHPSPREADSHEET
+// REGISTRO DE PLANTILLAS - VERSIÓN PHP 8.2
 // PLACAS SE GUARDAN SIN GUIONES NI ESPACIOS (ABC1234)
 // CON BOTONES PARA ELIMINAR REGISTROS ANTES DE CARGAR
 // Y BOTONES FLOTANTES SIEMPRE VISIBLES EN DERECHA
 // ============================================
+
 session_start();
 
-// Configuración PHP
-ini_set('memory_limit', '256M');
-ini_set('upload_max_filesize', '10M');
-ini_set('post_max_size', '10M');
-set_time_limit(300);
+// Configuración PHP como constantes
+define('MEMORY_LIMIT', '256M');
+define('UPLOAD_MAX_SIZE', '10M');
+define('POST_MAX_SIZE', '10M');
+define('MAX_EXECUTION_TIME', 300);
+
+ini_set('memory_limit', MEMORY_LIMIT);
+ini_set('upload_max_filesize', UPLOAD_MAX_SIZE);
+ini_set('post_max_size', POST_MAX_SIZE);
+set_time_limit(MAX_EXECUTION_TIME);
 
 // Cargar autoload de Composer para PhpSpreadsheet
 require_once __DIR__ . '/vendor/autoload.php';
 
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
-// Variables
+// Variables con tipos
 $error = '';
 $success = '';
-$datos_procesados = array();
-$duplicados_encontrados = array();
+$datos_procesados = [];
+$duplicados_encontrados = [];
 
 // ============================================
 // FUNCIONES PARA VALIDAR PLACAS ECUATORIANAS
@@ -32,19 +42,19 @@ $duplicados_encontrados = array();
  * Valida si una placa corresponde al formato ecuatoriano
  * Acepta múltiples formatos: ABC-1234, ABC1234, ABC 1234, etc.
  */
-function validarPlacaEcuador($placa) {
+function validarPlacaEcuador(string $placa): bool {
     // Limpiar la placa para validación
     $placa = strtoupper(trim($placa));
     
     // Eliminar guiones y espacios para validar el formato base
-    $placa_limpia = str_replace(array('-', ' '), '', $placa);
+    $placa_limpia = str_replace(['-', ' '], '', $placa);
     
     // Patrones para placas ecuatorianas (sin guiones)
     $patron1 = '/^[A-Z]{3}\d{4}$/';  // AAA1234 (autos)
     $patron2 = '/^[A-Z]{3}\d{3}$/';   // AAA123 (motos)
     $patron3 = '/^[A-Z]{3}\d{3}[A-Z]$/'; // AAA123A (gobierno)
     
-    return preg_match($patron1, $placa_limpia) || 
+    return (bool) preg_match($patron1, $placa_limpia) || 
            preg_match($patron2, $placa_limpia) || 
            preg_match($patron3, $placa_limpia);
 }
@@ -52,7 +62,7 @@ function validarPlacaEcuador($placa) {
 /**
  * Estandariza el formato de placa a AAA1234 (SIN GUIONES NI ESPACIOS)
  */
-function estandarizarPlaca($placa) {
+function estandarizarPlaca(string $placa): string {
     // 1. Limpiar espacios al inicio y final
     $placa = trim($placa);
     
@@ -69,7 +79,7 @@ function estandarizarPlaca($placa) {
     $placa = str_replace('.', '', $placa);
     
     // 6. Eliminar cualquier otro carácter que no sea letra o número
-    $placa = preg_replace('/[^A-Z0-9]/', '', $placa);
+    $placa = preg_replace('/[^A-Z0-9]/', '', $placa) ?? '';
     
     // 7. Extraer solo los primeros 3 caracteres (letras) y siguientes 3-4 números
     if (preg_match('/^([A-Z]{3})(\d{3,4}[A-Z]?)/', $placa, $matches)) {
@@ -81,150 +91,204 @@ function estandarizarPlaca($placa) {
     return $placa;
 }
 
+/**
+ * Genera plantilla Excel para descarga
+ */
+function generarPlantillaExcel(): void {
+    $spreadsheet = new Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
+    
+    // Encabezados
+    $sheet->setCellValue('A1', 'NOMBRE COMPLETO');
+    $sheet->setCellValue('B1', 'PLACA');
+    
+    // Estilo de encabezados
+    $sheet->getStyle('A1:B1')->getFont()->setBold(true);
+    $sheet->getStyle('A1:B1')->getFill()
+          ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+          ->getStartColor()->setARGB('FF009A3F');
+    $sheet->getStyle('A1:B1')->getFont()->getColor()->setARGB('FFFFFFFF');
+    
+    // Ejemplo
+    $sheet->setCellValue('A2', 'Juan Pérez');
+    $sheet->setCellValue('B2', 'ABC1234');
+    
+    $sheet->setCellValue('A3', 'María García');
+    $sheet->setCellValue('B3', 'XYZ5678');
+    
+    // Autoajustar columnas
+    foreach (range('A', 'B') as $column) {
+        $sheet->getColumnDimension($column)->setAutoSize(true);
+    }
+    
+    // Configurar headers para descarga
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment;filename="plantilla_conductores.xlsx"');
+    header('Cache-Control: max-age=0');
+    
+    $writer = new Xlsx($spreadsheet);
+    $writer->save('php://output');
+    exit;
+}
+
 // ============================================
 // PROCESAR CARGA DE ARCHIVO
 // ============================================
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     
-    require_once 'conexion.php';
-    
-    $fecha_plantilla = $_POST['fecha_plantilla'] ?? date('Y-m-d');
-    
-    // Validar fecha
-    if (!strtotime($fecha_plantilla)) {
-        $fecha_plantilla = date('Y-m-d');
+    // Verificar si es descarga de plantilla
+    if (isset($_POST['descargar_plantilla'])) {
+        generarPlantillaExcel();
     }
     
-    $archivo = $_FILES['archivo_excel'];
-    $extension = strtolower(pathinfo($archivo['name'], PATHINFO_EXTENSION));
-    
-    // Validar extensión
-    if (!in_array($extension, array('xlsx', 'xls', 'csv'))) {
-        $error = 'Solo se permiten archivos Excel (.xlsx, .xls) o CSV';
-    } elseif ($archivo['error'] !== UPLOAD_ERR_OK) {
-        $error = 'Error al subir el archivo. Código: ' . $archivo['error'];
-    } else {
-        // Procesar según extensión
-        try {
-            $datos_leidos = array();
-            
-            if ($extension == 'csv') {
-                // ============================================
-                // PROCESAR ARCHIVO CSV
-                // ============================================
-                if (($handle = fopen($archivo['tmp_name'], "r")) !== FALSE) {
-                    $primera_linea = true;
-                    while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
-                        if ($primera_linea) {
-                            $primera_linea = false;
-                            continue; // Saltar encabezados
+    // Procesar archivo
+    if (isset($_FILES['archivo_excel'])) {
+        
+        require_once 'conexion.php';
+        
+        $fecha_plantilla = $_POST['fecha_plantilla'] ?? date('Y-m-d');
+        
+        // Validar fecha
+        if (!strtotime($fecha_plantilla)) {
+            $fecha_plantilla = date('Y-m-d');
+        }
+        
+        $archivo = $_FILES['archivo_excel'];
+        $extension = strtolower(pathinfo($archivo['name'] ?? '', PATHINFO_EXTENSION));
+        
+        // Validar extensión
+        if (!in_array($extension, ['xlsx', 'xls', 'csv'], true)) {
+            $error = 'Solo se permiten archivos Excel (.xlsx, .xls) o CSV';
+        } elseif (($archivo['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            $error = match ($archivo['error'] ?? UPLOAD_ERR_NO_FILE) {
+                UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'El archivo excede el tamaño permitido',
+                UPLOAD_ERR_PARTIAL => 'El archivo se subió parcialmente',
+                UPLOAD_ERR_NO_FILE => 'No se seleccionó ningún archivo',
+                default => 'Error al subir el archivo. Código: ' . ($archivo['error'] ?? 'desconocido')
+            };
+        } else {
+            // Procesar según extensión
+            try {
+                $datos_leidos = [];
+                
+                if ($extension === 'csv') {
+                    // ============================================
+                    // PROCESAR ARCHIVO CSV
+                    // ============================================
+                    if (($handle = fopen($archivo['tmp_name'], "r")) !== false) {
+                        $primera_linea = true;
+                        while (($data = fgetcsv($handle, 1000, ",")) !== false) {
+                            if ($primera_linea) {
+                                $primera_linea = false;
+                                continue; // Saltar encabezados
+                            }
+                            if (count($data) >= 2) {
+                                $datos_leidos[] = [
+                                    'nombre' => trim($data[0] ?? ''),
+                                    'placa' => trim($data[1] ?? '')
+                                ];
+                            }
                         }
-                        if (count($data) >= 2) {
-                            $datos_leidos[] = array(
-                                'nombre' => trim($data[0]),
-                                'placa' => trim($data[1])
-                            );
-                        }
-                    }
-                    fclose($handle);
-                } else {
-                    throw new Exception("No se pudo abrir el archivo CSV");
-                }
-            } else {
-                // ============================================
-                // PROCESAR ARCHIVO EXCEL CON PHPSPREADSHEET
-                // ============================================
-                
-                // Cargar el archivo Excel
-                $spreadsheet = IOFactory::load($archivo['tmp_name']);
-                $sheet = $spreadsheet->getActiveSheet();
-                $highestRow = $sheet->getHighestRow();
-                
-                // Leer datos desde la fila 2 (asumiendo fila 1 como encabezados)
-                for ($row = 2; $row <= $highestRow; $row++) {
-                    $nombre = trim($sheet->getCell('A' . $row)->getValue());
-                    $placa = trim($sheet->getCell('B' . $row)->getValue());
-                    
-                    if (!empty($nombre) && !empty($placa)) {
-                        $datos_leidos[] = array(
-                            'nombre' => $nombre,
-                            'placa' => $placa
-                        );
-                    }
-                }
-            }
-            
-            // ============================================
-            // VALIDAR DATOS LEÍDOS
-            // ============================================
-            if (empty($datos_leidos)) {
-                $error = 'No se encontraron datos en el archivo';
-            } else {
-                // Normalizar y validar datos
-                $datos_validos = array();
-                $duplicados_temp = array();
-                $errores_validacion = array();
-                
-                foreach ($datos_leidos as $index => $dato) {
-                    $nombre = trim($dato['nombre']);
-                    $placa = trim($dato['placa']);
-                    
-                    // Validar nombre
-                    if (empty($nombre)) {
-                        $errores_validacion[] = "Fila " . ($index + 2) . ": Nombre vacío";
-                        continue;
-                    }
-                    
-                    // Validar placa ecuatoriana
-                    if (!validarPlacaEcuador($placa)) {
-                        $errores_validacion[] = "Fila " . ($index + 2) . ": Placa inválida '{$placa}'";
-                        continue;
-                    }
-                    
-                    // ESTANDARIZAR PLACA: Convertir a formato SIN GUIONES (ABC1234)
-                    $placa_estandar = estandarizarPlaca($placa);
-                    
-                    // Crear clave única para detectar duplicados
-                    $clave = $nombre . '|' . $placa_estandar;
-                    
-                    if (isset($duplicados_temp[$clave])) {
-                        $duplicados_encontrados[] = array(
-                            'nombre' => $nombre,
-                            'placa' => $placa_estandar,
-                            'fila_original' => $duplicados_temp[$clave],
-                            'fila_duplicada' => $index + 2
-                        );
+                        fclose($handle);
                     } else {
-                        $duplicados_temp[$clave] = $index + 2;
-                        $datos_validos[] = array(
-                            'nombre' => $nombre,
-                            'placa' => $placa_estandar  // ← GUARDADA SIN GUIONES
-                        );
+                        throw new Exception("No se pudo abrir el archivo CSV");
+                    }
+                } else {
+                    // ============================================
+                    // PROCESAR ARCHIVO EXCEL CON PHPSPREADSHEET
+                    // ============================================
+                    
+                    // Cargar el archivo Excel
+                    $spreadsheet = IOFactory::load($archivo['tmp_name']);
+                    $sheet = $spreadsheet->getActiveSheet();
+                    $highestRow = $sheet->getHighestRow();
+                    
+                    // Leer datos desde la fila 2 (asumiendo fila 1 como encabezados)
+                    for ($row = 2; $row <= $highestRow; $row++) {
+                        $nombre = trim((string)($sheet->getCell('A' . $row)->getValue() ?? ''));
+                        $placa = trim((string)($sheet->getCell('B' . $row)->getValue() ?? ''));
+                        
+                        if (!empty($nombre) && !empty($placa)) {
+                            $datos_leidos[] = [
+                                'nombre' => $nombre,
+                                'placa' => $placa
+                            ];
+                        }
                     }
                 }
                 
-                // Mostrar errores de validación
-                if (!empty($errores_validacion)) {
-                    $error = implode('<br>', array_slice($errores_validacion, 0, 10));
-                    if (count($errores_validacion) > 10) {
-                        $error .= '<br>... y ' . (count($errores_validacion) - 10) . ' errores más';
-                    }
+                // ============================================
+                // VALIDAR DATOS LEÍDOS
+                // ============================================
+                if (empty($datos_leidos)) {
+                    $error = 'No se encontraron datos en el archivo';
                 } else {
-                    // Guardar en sesión para mostrar y luego guardar
-                    $_SESSION['datos_plantilla_temp'] = array(
-                        'datos' => $datos_validos,
-                        'fecha' => $fecha_plantilla,
-                        'archivo' => $archivo['name'],
-                        'duplicados' => $duplicados_encontrados
-                    );
+                    // Normalizar y validar datos
+                    $datos_validos = [];
+                    $duplicados_temp = [];
+                    $errores_validacion = [];
                     
-                    $datos_procesados = $datos_validos;
+                    foreach ($datos_leidos as $index => $dato) {
+                        $nombre = trim($dato['nombre'] ?? '');
+                        $placa = trim($dato['placa'] ?? '');
+                        
+                        // Validar nombre
+                        if (empty($nombre)) {
+                            $errores_validacion[] = "Fila " . ($index + 2) . ": Nombre vacío";
+                            continue;
+                        }
+                        
+                        // Validar placa ecuatoriana
+                        if (!validarPlacaEcuador($placa)) {
+                            $errores_validacion[] = "Fila " . ($index + 2) . ": Placa inválida '{$placa}'";
+                            continue;
+                        }
+                        
+                        // ESTANDARIZAR PLACA: Convertir a formato SIN GUIONES (ABC1234)
+                        $placa_estandar = estandarizarPlaca($placa);
+                        
+                        // Crear clave única para detectar duplicados
+                        $clave = $nombre . '|' . $placa_estandar;
+                        
+                        if (isset($duplicados_temp[$clave])) {
+                            $duplicados_encontrados[] = [
+                                'nombre' => $nombre,
+                                'placa' => $placa_estandar,
+                                'fila_original' => $duplicados_temp[$clave],
+                                'fila_duplicada' => $index + 2
+                            ];
+                        } else {
+                            $duplicados_temp[$clave] = $index + 2;
+                            $datos_validos[] = [
+                                'nombre' => $nombre,
+                                'placa' => $placa_estandar  // ← GUARDADA SIN GUIONES
+                            ];
+                        }
+                    }
+                    
+                    // Mostrar errores de validación
+                    if (!empty($errores_validacion)) {
+                        $error = implode('<br>', array_slice($errores_validacion, 0, 10));
+                        if (count($errores_validacion) > 10) {
+                            $error .= '<br>... y ' . (count($errores_validacion) - 10) . ' errores más';
+                        }
+                    } else {
+                        // Guardar en sesión para mostrar y luego guardar
+                        $_SESSION['datos_plantilla_temp'] = [
+                            'datos' => $datos_validos,
+                            'fecha' => $fecha_plantilla,
+                            'archivo' => $archivo['name'] ?? 'desconocido',
+                            'duplicados' => $duplicados_encontrados
+                        ];
+                        
+                        $datos_procesados = $datos_validos;
+                    }
                 }
+                
+            } catch (Exception $e) {
+                $error = 'Error al procesar archivo: ' . $e->getMessage();
             }
-            
-        } catch (Exception $e) {
-            $error = 'Error al procesar archivo: ' . $e->getMessage();
         }
     }
 }
@@ -233,10 +297,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['archivo_excel'])) {
 // ELIMINAR REGISTRO DE LA VISTA PREVIA
 // ============================================
 
-if (isset($_POST['eliminar_registro']) && isset($_POST['indice'])) {
-    $indice = intval($_POST['indice']);
+if (isset($_POST['eliminar_registro'], $_POST['indice'])) {
+    $indice = filter_input(INPUT_POST, 'indice', FILTER_VALIDATE_INT);
     
-    if (isset($_SESSION['datos_plantilla_temp']['datos'][$indice])) {
+    if ($indice !== false && $indice !== null && isset($_SESSION['datos_plantilla_temp']['datos'][$indice])) {
         // Eliminar el registro del array en sesión
         array_splice($_SESSION['datos_plantilla_temp']['datos'], $indice, 1);
         
@@ -257,7 +321,7 @@ if (isset($_POST['eliminar_registro']) && isset($_POST['indice'])) {
 // ACTUALIZAR FECHA EN LA VISTA PREVIA
 // ============================================
 
-if (isset($_POST['actualizar_fecha']) && isset($_POST['nueva_fecha'])) {
+if (isset($_POST['actualizar_fecha'], $_POST['nueva_fecha'])) {
     $nueva_fecha = $_POST['nueva_fecha'];
     
     if (isset($_SESSION['datos_plantilla_temp']) && strtotime($nueva_fecha)) {
@@ -270,69 +334,73 @@ if (isset($_POST['actualizar_fecha']) && isset($_POST['nueva_fecha'])) {
 // GUARDAR EN BASE DE DATOS
 // ============================================
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_guardado'])) {
+if (isset($_POST['confirmar_guardado'])) {
     
     require_once 'conexion.php';
     
     if (isset($_SESSION['datos_plantilla_temp'])) {
         $temp = $_SESSION['datos_plantilla_temp'];
-        $datos = $temp['datos'];
-        $fecha = $temp['fecha'];
-        $archivo_nombre = $temp['archivo'];
+        $datos = $temp['datos'] ?? [];
+        $fecha = $temp['fecha'] ?? date('Y-m-d');
+        $archivo_nombre = $temp['archivo'] ?? 'desconocido';
         
         $database = new Database();
         $conn = $database->getConnection();
         
-        // Iniciar transacción
-        sqlsrv_begin_transaction($conn);
-        
-        try {
-            // Primero, desactivar registros anteriores para esta fecha
-            $query_desactivar = "UPDATE DPL.externos.plantillas_conductores 
-                                 SET activo = 0 
-                                 WHERE fecha_plantilla = ? AND activo = 1";
-            $params_desactivar = array($fecha);
-            $stmt_desactivar = sqlsrv_query($conn, $query_desactivar, $params_desactivar);
+        if (!$conn) {
+            $error = 'Error de conexión a la base de datos';
+        } else {
+            // Iniciar transacción
+            sqlsrv_begin_transaction($conn);
             
-            if ($stmt_desactivar === false) {
-                throw new Exception("Error al desactivar registros anteriores");
-            }
-            sqlsrv_free_stmt($stmt_desactivar);
-            
-            // Insertar nuevos datos
-            $query_insert = "INSERT INTO DPL.externos.plantillas_conductores 
-                            (nombre, placa, fecha_plantilla, archivo_original) 
-                            VALUES (?, ?, ?, ?)";
-            
-            $insertados = 0;
-            foreach ($datos as $dato) {
-                $params_insert = array(
-                    $dato['nombre'],
-                    $dato['placa'],  // ← YA ESTÁ SIN GUIONES
-                    $fecha,
-                    $archivo_nombre
-                );
+            try {
+                // Primero, desactivar registros anteriores para esta fecha
+                $query_desactivar = "UPDATE DPL.externos.plantillas_conductores 
+                                     SET activo = 0 
+                                     WHERE fecha_plantilla = ? AND activo = 1";
+                $params_desactivar = [$fecha];
+                $stmt_desactivar = sqlsrv_query($conn, $query_desactivar, $params_desactivar);
                 
-                $stmt_insert = sqlsrv_query($conn, $query_insert, $params_insert);
-                if ($stmt_insert === false) {
-                    throw new Exception("Error al insertar registro: " . print_r(sqlsrv_errors(), true));
+                if ($stmt_desactivar === false) {
+                    throw new Exception("Error al desactivar registros anteriores");
                 }
-                sqlsrv_free_stmt($stmt_insert);
-                $insertados++;
+                sqlsrv_free_stmt($stmt_desactivar);
+                
+                // Insertar nuevos datos
+                $query_insert = "INSERT INTO DPL.externos.plantillas_conductores 
+                                (nombre, placa, fecha_plantilla, archivo_original) 
+                                VALUES (?, ?, ?, ?)";
+                
+                $insertados = 0;
+                foreach ($datos as $dato) {
+                    $params_insert = [
+                        $dato['nombre'] ?? '',
+                        $dato['placa'] ?? '',  // ← YA ESTÁ SIN GUIONES
+                        $fecha,
+                        $archivo_nombre
+                    ];
+                    
+                    $stmt_insert = sqlsrv_query($conn, $query_insert, $params_insert);
+                    if ($stmt_insert === false) {
+                        throw new Exception("Error al insertar registro");
+                    }
+                    sqlsrv_free_stmt($stmt_insert);
+                    $insertados++;
+                }
+                
+                sqlsrv_commit($conn);
+                
+                $success = "✅ Se guardaron $insertados registros correctamente para la fecha " . date('d/m/Y', strtotime($fecha));
+                
+                // Limpiar sesión temporal
+                unset($_SESSION['datos_plantilla_temp']);
+                $datos_procesados = [];
+                $duplicados_encontrados = [];
+                
+            } catch (Exception $e) {
+                sqlsrv_rollback($conn);
+                $error = 'Error al guardar en base de datos: ' . $e->getMessage();
             }
-            
-            sqlsrv_commit($conn);
-            
-            $success = "✅ Se guardaron $insertados registros correctamente para la fecha " . date('d/m/Y', strtotime($fecha));
-            
-            // Limpiar sesión temporal
-            unset($_SESSION['datos_plantilla_temp']);
-            $datos_procesados = array();
-            $duplicados_encontrados = array();
-            
-        } catch (Exception $e) {
-            sqlsrv_rollback($conn);
-            $error = 'Error al guardar en base de datos: ' . $e->getMessage();
         }
     }
 }
@@ -343,8 +411,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirmar_guardado'])
 
 if (isset($_POST['cancelar'])) {
     unset($_SESSION['datos_plantilla_temp']);
-    $datos_procesados = array();
-    $duplicados_encontrados = array();
+    $datos_procesados = [];
+    $duplicados_encontrados = [];
+    $success = 'Operación cancelada';
 }
 
 // ============================================
@@ -352,9 +421,9 @@ if (isset($_POST['cancelar'])) {
 // ============================================
 
 if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !isset($_POST['eliminar_registro']) && !isset($_POST['actualizar_fecha'])) {
-    $datos_procesados = $_SESSION['datos_plantilla_temp']['datos'];
-    $duplicados_encontrados = $_SESSION['datos_plantilla_temp']['duplicados'];
-    $fecha_temp = $_SESSION['datos_plantilla_temp']['fecha'];
+    $datos_procesados = $_SESSION['datos_plantilla_temp']['datos'] ?? [];
+    $duplicados_encontrados = $_SESSION['datos_plantilla_temp']['duplicados'] ?? [];
+    $fecha_temp = $_SESSION['datos_plantilla_temp']['fecha'] ?? date('Y-m-d');
 }
 ?>
 <!DOCTYPE html>
@@ -1183,12 +1252,12 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
 <body>
     <!-- Botones flotantes en las esquinas -->
     <div class="floating-buttons">
-        <div class="floating-button left" onclick="window.location.href='dashboard.php'">
+        <a href="dashboard.php" class="floating-button left">
             <i class="fas fa-tachometer-alt"></i> Dashboard
-        </div>
-        <div class="floating-button right" onclick="window.location.href='monitor.php'">
+        </a>
+        <a href="monitor.php" class="floating-button right">
             <i class="fas fa-chart-line"></i> Monitor
-        </div>
+        </a>
     </div>
 
     <!-- Modal de confirmación -->
@@ -1233,16 +1302,19 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
     <div class="floating-actions-right">
         <!-- Botón Descargar Plantilla -->
         <div class="action-item">
-            <a href="descargar_plantilla.php" class="action-button blue" style="text-decoration: none;">
-                <i class="fas fa-download"></i>
-                <div class="tooltip">Descargar plantilla Excel con formato</div>
-            </a>
+            <form method="POST" style="display: inline;">
+                <input type="hidden" name="descargar_plantilla" value="1">
+                <button type="submit" class="action-button blue">
+                    <i class="fas fa-download"></i>
+                    <div class="tooltip">Descargar plantilla Excel con formato</div>
+                </button>
+            </form>
             <div class="action-label blue">Descargar</div>
         </div>
         
         <!-- Botón Procesar Archivo -->
         <div class="action-item">
-            <button class="action-button purple" onclick="document.getElementById('uploadForm').submit();">
+            <button class="action-button purple" onclick="procesarArchivo()">
                 <i class="fas fa-upload"></i>
                 <div class="tooltip">Procesar archivo seleccionado</div>
             </button>
@@ -1260,14 +1332,15 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
         
         <!-- Botón Cancelar (solo visible en vista previa) -->
         <div class="action-item" id="btnCancelarContainer" style="<?= !empty($datos_procesados) ? 'display: flex;' : 'display: none;' ?>">
-            <button class="action-button tertiary" onclick="document.getElementById('cancelarForm').submit();">
-                <i class="fas fa-times"></i>
-                <div class="tooltip">Cancelar y volver</div>
-            </button>
+            <form method="POST" style="display: inline;">
+                <input type="hidden" name="cancelar" value="1">
+                <button type="submit" class="action-button tertiary" onclick="return confirm('¿Estás seguro de cancelar? Se perderán los datos procesados.')">
+                    <i class="fas fa-times"></i>
+                    <div class="tooltip">Cancelar y volver</div>
+                </button>
+            </form>
             <div class="action-label tertiary">Cancelar</div>
         </div>
-        
-        
     </div>
 
     <div class="container">
@@ -1291,14 +1364,14 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
             <?php if ($error): ?>
                 <div class="message error">
                     <i class="fas fa-exclamation-circle"></i>
-                    <span><?= $error ?></span>
+                    <span><?= htmlspecialchars($error) ?></span>
                 </div>
             <?php endif; ?>
             
             <?php if ($success): ?>
                 <div class="message success">
                     <i class="fas fa-check-circle"></i>
-                    <span><?= $success ?></span>
+                    <span><?= htmlspecialchars($success) ?></span>
                 </div>
             <?php endif; ?>
         </div>
@@ -1314,7 +1387,7 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
                         <div class="col">
                             <div class="form-group">
                                 <label><i class="fas fa-calendar"></i> Fecha de la plantilla:</label>
-                                <input type="date" name="fecha_plantilla" value="<?= date('Y-m-d') ?>" required>
+                                <input type="date" name="fecha_plantilla" value="<?= htmlspecialchars(date('Y-m-d')) ?>" required>
                             </div>
                         </div>
                         <div class="col">
@@ -1332,8 +1405,6 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
                         </button>
                     </div>
                 </form>
-                
-                
             </div>
 
             <!-- Últimas cargas -->
@@ -1342,7 +1413,7 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
             $database = new Database();
             $conn = $database->getConnection();
             
-            if ($conn) {
+            if ($conn):
                 $query_ultimas = "SELECT TOP 5 fecha_plantilla, COUNT(*) as total, MAX(fecha_carga) as ultima_carga
                                   FROM DPL.externos.plantillas_conductores
                                   WHERE activo = 1
@@ -1367,10 +1438,10 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
                             <?php while ($row = sqlsrv_fetch_array($stmt_ultimas, SQLSRV_FETCH_ASSOC)): ?>
                             <tr>
                                 <td><?= date('d/m/Y', strtotime($row['fecha_plantilla'])) ?></td>
-                                <td><?= $row['total'] ?> conductores</td>
+                                <td><?= (int)($row['total'] ?? 0) ?> conductores</td>
                                 <td>
                                     <?php 
-                                    if ($row['ultima_carga'] instanceof DateTime) {
+                                    if (isset($row['ultima_carga']) && $row['ultima_carga'] instanceof DateTime) {
                                         echo $row['ultima_carga']->format('d/m/Y H:i');
                                     } else {
                                         echo 'N/A';
@@ -1385,10 +1456,10 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
             </div>
             <?php 
                     endif;
-                    if ($stmt_ultimas !== false) {
+                    if (isset($stmt_ultimas) && $stmt_ultimas !== false) {
                         sqlsrv_free_stmt($stmt_ultimas);
                     }
-                }
+                endif;
             ?>
 
         <?php else: ?>
@@ -1401,8 +1472,10 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
                         <div class="col">
                             <strong><i class="fas fa-calendar"></i> Fecha de uso de placas:</strong><br>
                             <div class="fecha-editable">
-                                <input type="date" id="fechaInput" value="<?= $fecha_temp ?? $_SESSION['datos_plantilla_temp']['fecha'] ?>" style="width: auto;">
-                                
+                                <input type="date" id="fechaInput" value="<?= htmlspecialchars($fecha_temp ?? $_SESSION['datos_plantilla_temp']['fecha'] ?? date('Y-m-d')) ?>">
+                                <button class="btn-actualizar-fecha" onclick="actualizarFecha()">
+                                    <i class="fas fa-sync-alt"></i> Actualizar
+                                </button>
                             </div>
                         </div>
                         <div class="col">
@@ -1411,7 +1484,7 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
                         </div>
                         <div class="col">
                             <strong><i class="fas fa-file"></i> Archivo:</strong><br>
-                            <?= $_SESSION['datos_plantilla_temp']['archivo'] ?? 'N/A' ?>
+                            <?= htmlspecialchars($_SESSION['datos_plantilla_temp']['archivo'] ?? 'N/A') ?>
                         </div>
                     </div>
                 </div>
@@ -1422,8 +1495,8 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
                     <?php foreach ($duplicados_encontrados as $dup): ?>
                     <div class="duplicado-item">
                         <i class="fas fa-info-circle"></i>
-                        <strong><?= htmlspecialchars($dup['nombre']) ?></strong> - <?= htmlspecialchars($dup['placa']) ?> 
-                        (filas <?= $dup['fila_original'] ?> y <?= $dup['fila_duplicada'] ?>)
+                        <strong><?= htmlspecialchars($dup['nombre'] ?? '') ?></strong> - <?= htmlspecialchars($dup['placa'] ?? '') ?> 
+                        (filas <?= (int)($dup['fila_original'] ?? 0) ?> y <?= (int)($dup['fila_duplicada'] ?? 0) ?>)
                     </div>
                     <?php endforeach; ?>
                 </div>
@@ -1444,13 +1517,13 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
                             <?php foreach ($datos_procesados as $index => $dato): ?>
                             <tr>
                                 <td><?= $index + 1 ?></td>
-                                <td><?= htmlspecialchars($dato['nombre']) ?></td>
-                                <td><span class="badge badge-success"><?= htmlspecialchars($dato['placa']) ?></span></td>
+                                <td><?= htmlspecialchars($dato['nombre'] ?? '') ?></td>
+                                <td><span class="badge badge-success"><?= htmlspecialchars($dato['placa'] ?? '') ?></span></td>
                                 <td>
                                     <form method="POST" style="display: inline;">
                                         <input type="hidden" name="eliminar_registro" value="1">
                                         <input type="hidden" name="indice" value="<?= $index ?>">
-                                        <button type="submit" class="btn-eliminar" title="Eliminar registro">
+                                        <button type="submit" class="btn-eliminar" title="Eliminar registro" onclick="return confirm('¿Eliminar este registro?')">
                                             <i class="fas fa-trash-alt"></i>
                                         </button>
                                     </form>
@@ -1459,25 +1532,6 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
                             <?php endforeach; ?>
                         </tbody>
                     </table>
-                </div>
-                
-                <!-- Botones de acción principales (ocultos, se usan flotantes) -->
-                <div style="display: none;">
-                    <div class="row" style="margin-top: 20px;">
-                        <div class="col">
-                            <button class="btn btn-primary" style="width: 100%;" onclick="mostrarModalConfirmacion()">
-                                <i class="fas fa-check-circle"></i> CONFIRMAR Y GUARDAR EN BD
-                            </button>
-                        </div>
-                        <div class="col">
-                            <form id="cancelarForm" method="POST">
-                                <input type="hidden" name="cancelar" value="1">
-                                <button type="submit" class="btn btn-danger" style="width: 100%;">
-                                    <i class="fas fa-times-circle"></i> CANCELAR Y VOLVER
-                                </button>
-                            </form>
-                        </div>
-                    </div>
                 </div>
                 
                 <p style="text-align: center; margin-top: 15px; color: #7f8c8d; font-size: 13px;">
@@ -1505,6 +1559,24 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
     </form>
 
     <script>
+        // Función para procesar archivo
+        function procesarArchivo() {
+            const fileInput = document.getElementById('archivoInput');
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+                alert('Por favor selecciona un archivo primero');
+                return;
+            }
+            
+            // Mostrar indicador de carga
+            const btn = document.querySelector('.action-button.purple');
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i>';
+            btn.disabled = true;
+            
+            // Enviar el formulario
+            document.getElementById('uploadForm').submit();
+        }
+
         // Función para actualizar fecha
         function actualizarFecha() {
             const fechaInput = document.getElementById('fechaInput');
@@ -1522,19 +1594,23 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
         // Funciones para el modal de confirmación
         function mostrarModalConfirmacion() {
             const modal = document.getElementById('confirmModal');
-            const fecha = document.getElementById('fechaInput')?.value || '<?= $fecha_temp ?? $_SESSION['datos_plantilla_temp']['fecha'] ?>';
+            const fecha = document.getElementById('fechaInput')?.value || '<?= $fecha_temp ?? $_SESSION['datos_plantilla_temp']['fecha'] ?? date('Y-m-d') ?>';
             const cantidad = '<?= count($datos_procesados) ?>';
-            const archivo = '<?= $_SESSION['datos_plantilla_temp']['archivo'] ?? 'N/A' ?>';
+            const archivo = '<?= htmlspecialchars($_SESSION['datos_plantilla_temp']['archivo'] ?? 'N/A') ?>';
             
             // Formatear fecha para mostrar
-            const fechaObj = new Date(fecha + 'T00:00:00');
-            const fechaFormateada = fechaObj.toLocaleDateString('es-ES', {
-                day: '2-digit',
-                month: '2-digit',
-                year: 'numeric'
-            });
+            try {
+                const fechaObj = new Date(fecha + 'T00:00:00');
+                const fechaFormateada = fechaObj.toLocaleDateString('es-ES', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric'
+                });
+                document.getElementById('modalFecha').textContent = fechaFormateada;
+            } catch (e) {
+                document.getElementById('modalFecha').textContent = fecha;
+            }
             
-            document.getElementById('modalFecha').textContent = fechaFormateada;
             document.getElementById('modalCantidad').textContent = cantidad + ' placas';
             document.getElementById('modalArchivo').textContent = archivo;
             
@@ -1549,24 +1625,6 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
             cerrarModal();
             document.getElementById('confirmarGuardadoForm').submit();
         }
-
-        // Confirmar antes de cancelar
-        document.querySelectorAll('form input[name="cancelar"]').forEach(input => {
-            input.closest('form').addEventListener('submit', function(e) {
-                if (!confirm('¿Estás seguro de cancelar? Se perderán los datos procesados.')) {
-                    e.preventDefault();
-                }
-            });
-        });
-
-        // Deshabilitar botón de envío para evitar doble click
-        document.querySelectorAll('form button[type="submit"]').forEach(button => {
-            button.addEventListener('click', function() {
-                setTimeout(() => {
-                    this.disabled = true;
-                }, 100);
-            });
-        });
 
         // Mostrar nombre del archivo seleccionado
         const fileInput = document.querySelector('input[type="file"]');
@@ -1587,10 +1645,20 @@ if (isset($_SESSION['datos_plantilla_temp']) && empty($datos_procesados) && !iss
         });
 
         // Cerrar modal al hacer click fuera
-        document.getElementById('confirmModal').addEventListener('click', function(e) {
+        document.getElementById('confirmModal')?.addEventListener('click', function(e) {
             if (e.target === this) {
                 cerrarModal();
             }
+        });
+
+        // Prevenir doble envío de formularios
+        document.querySelectorAll('form').forEach(form => {
+            form.addEventListener('submit', function() {
+                const submitBtn = this.querySelector('button[type="submit"]');
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                }
+            });
         });
     </script>
 </body>
