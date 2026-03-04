@@ -1,4 +1,10 @@
 <?php
+// ============================================
+// ACTIVAR DEBUG
+// ============================================
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 session_start();
 
 // ============================================
@@ -129,8 +135,14 @@ function obtenerUltimoEstadoMarcado($viaje) {
     return null;
 }
 
-// Función para registrar una marcación
-function registrarMarcacion($conn, $viaje_id, $estado_numero, $estado_key, $estado_nombre, $latitud, $longitud, $precision_gps) {
+// Función para registrar una marcación (CON DEBUG)
+function registrarMarcacion($conn, $viaje_id, $estado_numero, $estado_key, $estado_nombre, $latitud, $longitud, $precision_gps, $kilometraje = null) {
+    // Log para debug
+    error_log("=== INICIO registrarMarcacion ===");
+    error_log("viaje_id: " . $viaje_id);
+    error_log("estado_numero: " . $estado_numero);
+    error_log("kilometraje: " . ($kilometraje ?? 'null'));
+    
     // Mapeo de campos según el número de estado
     $campos = [
         'estado' . $estado_numero . '_key' => $estado_key,
@@ -140,6 +152,12 @@ function registrarMarcacion($conn, $viaje_id, $estado_numero, $estado_key, $esta
         'estado' . $estado_numero . '_longitud' => $longitud,
         'estado' . $estado_numero . '_precision' => $precision_gps
     ];
+    
+    // Si es estado 1 o 2 y hay kilometraje, agregarlo
+    if ($estado_numero <= 2 && $kilometraje !== null && $kilometraje !== '') {
+        $campos['kilometraje' . $estado_numero] = $kilometraje;
+        error_log("Agregando kilometraje" . $estado_numero . " = " . $kilometraje);
+    }
     
     // Construir query dinámica
     $setParts = [];
@@ -160,31 +178,43 @@ function registrarMarcacion($conn, $viaje_id, $estado_numero, $estado_key, $esta
               SET " . implode(', ', $setParts) . "
               WHERE id = ?";
     
+    error_log("Query: " . $query);
+    error_log("Params: " . print_r($params, true));
+    
     $stmt = sqlsrv_query($conn, $query, $params);
     
-    if ($stmt) {
-        sqlsrv_free_stmt($stmt);
-        
-        // Si es el último estado, marcar viaje como completado
-        if ($estado_numero == 7) {
-            $updateQuery = "UPDATE externos.viajes_tracking 
-                           SET estado_general = 'completado', fecha_fin_viaje = GETDATE() 
-                           WHERE id = ?";
-            $updateStmt = sqlsrv_query($conn, $updateQuery, array($viaje_id));
-            if ($updateStmt) {
-                sqlsrv_free_stmt($updateStmt);
-            }
-        }
-        
-        return true;
+    if ($stmt === false) {
+        // Error en la consulta
+        $errors = sqlsrv_errors();
+        error_log("Error SQL: " . print_r($errors, true));
+        return false;
     }
     
-    return false;
+    sqlsrv_free_stmt($stmt);
+    
+    // Si es el último estado, marcar viaje como completado
+    if ($estado_numero == 7) {
+        $updateQuery = "UPDATE externos.viajes_tracking 
+                       SET estado_general = 'completado', fecha_fin_viaje = GETDATE() 
+                       WHERE id = ?";
+        $updateStmt = sqlsrv_query($conn, $updateQuery, array($viaje_id));
+        if ($updateStmt) {
+            sqlsrv_free_stmt($updateStmt);
+        }
+    }
+    
+    error_log("=== FIN registrarMarcacion: OK ===");
+    return true;
 }
 
 // Conectar a la BD
 $database = new Database();
 $conn = $database->getConnection();
+
+// Verificar conexión
+if ($conn === false) {
+    die("Error de conexión a la base de datos");
+}
 
 // Obtener o crear viaje activo
 $viaje_activo = obtenerViajeActivo($conn, $placa_conductor, $plantilla_conductor_id, $nombre_conductor);
@@ -223,29 +253,91 @@ if ($viaje_activo) {
     }
 }
 
-// PROCESAR MARCADOR (POST)
+// PROCESAR MARCADOR (POST) - CON DEBUG
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['estado']) && $viaje_activo) {
-    $estado = $_POST['estado'];
-    $estado_numero = $estados_numeros[$estado] ?? 0;
+    // HEADER para respuesta JSON
+    header('Content-Type: application/json');
     
-    if ($estado_numero > 0) {
-        $latitud = isset($_POST['latitud']) ? $_POST['latitud'] : null;
-        $longitud = isset($_POST['longitud']) ? $_POST['longitud'] : null;
-        $precision_gps = isset($_POST['precision']) ? $_POST['precision'] : null;
+    try {
+        error_log("=== POST RECIBIDO ===");
+        error_log("POST data: " . print_r($_POST, true));
         
-        // Registrar marcación
-        $resultado = registrarMarcacion(
-            $conn,
-            $viaje_activo['id'],
-            $estado_numero,
-            $estado,
-            $estados[$estado],
-            $latitud,
-            $longitud,
-            $precision_gps
-        );
+        $estado = $_POST['estado'];
+        $estado_numero = $estados_numeros[$estado] ?? 0;
         
-        echo json_encode(array('success' => $resultado));
+        if ($estado_numero > 0) {
+            $latitud = isset($_POST['latitud']) ? $_POST['latitud'] : null;
+            $longitud = isset($_POST['longitud']) ? $_POST['longitud'] : null;
+            $precision_gps = isset($_POST['precision']) ? $_POST['precision'] : null;
+            $kilometraje = isset($_POST['kilometraje']) ? $_POST['kilometraje'] : null;
+            
+            // Debug
+            error_log("Estado: " . $estado);
+            error_log("Número: " . $estado_numero);
+            error_log("Kilometraje: " . ($kilometraje ?? 'null'));
+            error_log("Latitud: " . ($latitud ?? 'null'));
+            error_log("Longitud: " . ($longitud ?? 'null'));
+            
+            // Validar kilometraje para estados 1 y 2
+            if ($estado_numero <= 2) {
+                if (empty($kilometraje)) {
+                    echo json_encode(array(
+                        'success' => false, 
+                        'error' => 'El kilometraje es requerido'
+                    ));
+                    exit;
+                }
+                if (!is_numeric($kilometraje)) {
+                    echo json_encode(array(
+                        'success' => false, 
+                        'error' => 'El kilometraje debe ser un número'
+                    ));
+                    exit;
+                }
+                if ($kilometraje < 0) {
+                    echo json_encode(array(
+                        'success' => false, 
+                        'error' => 'El kilometraje no puede ser negativo'
+                    ));
+                    exit;
+                }
+            }
+            
+            // Registrar marcación con kilometraje
+            $resultado = registrarMarcacion(
+                $conn,
+                $viaje_activo['id'],
+                $estado_numero,
+                $estado,
+                $estados[$estado],
+                $latitud,
+                $longitud,
+                $precision_gps,
+                $kilometraje
+            );
+            
+            if ($resultado) {
+                echo json_encode(array('success' => true));
+            } else {
+                echo json_encode(array(
+                    'success' => false, 
+                    'error' => 'Error en la base de datos'
+                ));
+            }
+            exit;
+        } else {
+            echo json_encode(array(
+                'success' => false, 
+                'error' => 'Estado no válido'
+            ));
+            exit;
+        }
+    } catch (Exception $e) {
+        error_log("EXCEPCIÓN: " . $e->getMessage());
+        echo json_encode(array(
+            'success' => false, 
+            'error' => 'Error: ' . $e->getMessage()
+        ));
         exit;
     }
 }
@@ -521,6 +613,108 @@ h1{
     font-weight:700;
 }
 
+/* Modal para kilometraje */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background-color: white;
+    margin: auto;
+    padding: 25px;
+    border-radius: 28px;
+    width: 90%;
+    max-width: 380px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+    animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.modal h3 {
+    color: var(--verde);
+    margin-bottom: 20px;
+    font-size: 1.5rem;
+    text-align: center;
+}
+
+.modal p {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #666;
+    font-size: 1.1rem;
+}
+
+.modal input {
+    width: 100%;
+    padding: 15px;
+    border: 2px solid #ddd;
+    border-radius: 15px;
+    font-size: 1.2rem;
+    margin-bottom: 20px;
+    text-align: center;
+    font-weight: bold;
+}
+
+.modal input:focus {
+    outline: none;
+    border-color: var(--verde);
+}
+
+.modal-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.modal-btn {
+    flex: 1;
+    padding: 15px;
+    border: none;
+    border-radius: 15px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.modal-btn-primary {
+    background: var(--verde);
+    color: white;
+}
+
+.modal-btn-primary:hover {
+    background: #007a32;
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(0,122,50,0.3);
+}
+
+.modal-btn-secondary {
+    background: #f0f0f0;
+    color: #666;
+}
+
+.modal-btn-secondary:hover {
+    background: #e0e0e0;
+}
+
 /* Botones */
 .btn-marcar {
     width:100%;
@@ -622,6 +816,19 @@ h1{
 </style>
 </head>
 <body>
+
+<!-- MODAL PARA INGRESAR KILOMETRAJE -->
+<div id="kilometrajeModal" class="modal">
+    <div class="modal-content">
+        <h3>📊 Ingresar Kilometraje</h3>
+        <p id="modalEstadoTexto">Para Salida Ruta</p>
+        <input type="number" id="kilometrajeInput" placeholder="Ej: 12500" min="0" step="1">
+        <div class="modal-buttons">
+            <button class="modal-btn modal-btn-secondary" onclick="cerrarModal()">Cancelar</button>
+            <button class="modal-btn modal-btn-primary" onclick="confirmarKilometraje()">Confirmar</button>
+        </div>
+    </div>
+</div>
 
 <div class="container">
 
@@ -731,6 +938,10 @@ var estadoActualKey = '<?= $estado_actual_key ?>';
 // Estados marcados desde PHP
 var estadosMarcados = <?= json_encode($estados_marcados) ?>;
 
+// Variable para controlar si estamos esperando kilometraje
+var esperandoKilometraje = false;
+var estadoPendiente = null;
+
 // Clave única para localStorage
 var STORAGE_KEY = 'ransa_tracking_' + placaConductor;
 
@@ -758,6 +969,7 @@ function obtenerGPS() {
             precision = position.coords.accuracy;
             gpsActivo = true;
             indicator.innerHTML = '<span class="gps-pulse gps-pulse-active"></span><span class="gps-active">📍 GPS ACTIVO</span>';
+            console.log('GPS activo:', latitud, longitud);
         },
         function(error) {
             gpsActivo = false;
@@ -769,61 +981,168 @@ function obtenerGPS() {
                 default: mensaje += 'Error';
             }
             indicator.innerHTML = '<span class="gps-pulse gps-pulse-inactive"></span><span class="gps-inactive">' + mensaje + '</span>';
+            console.error('GPS error:', error);
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
 }
 
 // ============================================
-// MARCAR ESTADO
+// MODAL PARA KILOMETRAJE (CORREGIDO)
+// ============================================
+function abrirModal(estado) {
+    console.log('abrirModal() llamado con estado:', estado);
+    estadoPendiente = estado; // Guardar el estado
+    console.log('estadoPendiente guardado:', estadoPendiente);
+    
+    var modal = document.getElementById('kilometrajeModal');
+    var texto = document.getElementById('modalEstadoTexto');
+    var input = document.getElementById('kilometrajeInput');
+    
+    texto.innerHTML = 'Para: <strong>' + estadosDisponibles[estado] + '</strong>';
+    input.value = '';
+    input.focus();
+    
+    modal.style.display = 'flex';
+    esperandoKilometraje = true;
+}
+
+function cerrarModal() {
+    console.log('cerrarModal() llamado');
+    var modal = document.getElementById('kilometrajeModal');
+    modal.style.display = 'none';
+    esperandoKilometraje = false;
+    // NO limpiamos estadoPendiente aquí para mantenerlo disponible
+}
+
+function confirmarKilometraje() {
+    console.log('confirmarKilometraje() llamado');
+    console.log('estadoPendiente actual:', estadoPendiente);
+    
+    var input = document.getElementById('kilometrajeInput');
+    var kilometraje = input.value.trim();
+    
+    if (!kilometraje || isNaN(kilometraje) || kilometraje < 0) {
+        alert('Por favor ingresa un kilometraje válido');
+        return;
+    }
+    
+    // Guardar el estado antes de cerrar el modal
+    var estadoActual = estadoPendiente;
+    console.log('Estado a marcar:', estadoActual);
+    
+    cerrarModal();
+    
+    // Proceder con la marcación incluyendo el kilometraje
+    enviarMarcacion(estadoActual, kilometraje);
+}
+
+// ============================================
+// MARCAR ESTADO (CORREGIDO)
 // ============================================
 function marcarEstado() {
+    console.log('marcarEstado() llamado');
+    console.log('estadoActualKey:', estadoActualKey);
+    
     if (estadoActualKey === 'completado') {
         alert('✅ Este viaje ya está completado');
         return;
     }
     
     var btn = document.getElementById('btnMarcar');
+    
+    // Verificar si es estado 1 o 2 (requieren kilometraje)
+    if (estadoActualKey === 'salida_ruta' || estadoActualKey === 'retorno_ruta') {
+        btn.disabled = true;
+        abrirModal(estadoActualKey);
+        return;
+    }
+    
+    // Para otros estados, proceder sin kilometraje
+    btn.disabled = true;
+    enviarMarcacion(estadoActualKey, null);
+}
+
+function enviarMarcacion(estado, kilometraje) {
+    console.log('enviarMarcacion() llamado');
+    console.log('estado recibido:', estado);
+    console.log('kilometraje:', kilometraje);
+    console.log('GPS:', {latitud, longitud, precision});
+    
+    // Validar que estado no sea null o undefined
+    if (!estado) {
+        console.error('Error: estado es null o undefined');
+        console.log('estadoActualKey:', estadoActualKey);
+        console.log('estadoPendiente:', estadoPendiente);
+        alert('Error: No se pudo determinar el estado a marcar');
+        var btn = document.getElementById('btnMarcar');
+        if (btn) btn.disabled = false;
+        return;
+    }
+    
+    // Deshabilitar botón
+    var btn = document.getElementById('btnMarcar');
     if (btn) btn.disabled = true;
     
-    // Fecha actual
-    var ahora = new Date();
-    var fechaStr = ahora.getFullYear() + '-' + 
-                   String(ahora.getMonth() + 1).padStart(2, '0') + '-' +
-                   String(ahora.getDate()).padStart(2, '0') + ' ' +
-                   String(ahora.getHours()).padStart(2, '0') + ':' +
-                   String(ahora.getMinutes()).padStart(2, '0') + ':' +
-                   String(ahora.getSeconds()).padStart(2, '0');
-    
-    // Enviar a BD
-    var formData = 'estado=' + encodeURIComponent(estadoActualKey) + 
-                   '&fecha=' + encodeURIComponent(fechaStr);
+    // Construir FormData
+    var formData = new URLSearchParams();
+    formData.append('estado', estado);
     
     if (latitud && longitud) {
-        formData += '&latitud=' + latitud + '&longitud=' + longitud + '&precision=' + (precision || '');
+        formData.append('latitud', latitud);
+        formData.append('longitud', longitud);
+        formData.append('precision', precision || '');
     }
+    
+    if (kilometraje) {
+        formData.append('kilometraje', kilometraje);
+    }
+    
+    console.log('Enviando datos:', formData.toString());
     
     fetch('', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData
+        headers: { 
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData.toString()
     })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        if (d.success) {
-            if (navigator.vibrate) navigator.vibrate(60);
-            console.log('✅ Marcación guardada en BD');
+    .then(function(response) {
+        console.log('Respuesta status:', response.status);
+        console.log('Respuesta headers:', response.headers);
+        
+        var contentType = response.headers.get('content-type');
+        console.log('Content-Type:', contentType);
+        
+        if (!response.ok) {
+            throw new Error('HTTP error ' + response.status);
+        }
+        return response.text();
+    })
+    .then(function(text) {
+        console.log('Respuesta texto:', text);
+        
+        try {
+            var d = JSON.parse(text);
+            console.log('Respuesta JSON:', d);
             
-            // Recargar la página para actualizar el estado
-            location.reload();
-        } else {
-            alert('Error al guardar la marcación');
+            if (d.success) {
+    if (navigator.vibrate) navigator.vibrate(60);
+    // Simplemente recargamos sin alerta
+    location.reload();
+} else {
+                alert('Error: ' + (d.error || 'Error desconocido'));
+                if (btn) btn.disabled = false;
+            }
+        } catch(e) {
+            console.error('Error parseando JSON:', e);
+            alert('Error: La respuesta no es JSON válido. Revisa la consola (F12)');
             if (btn) btn.disabled = false;
         }
     })
     .catch(function(error) {
-        console.log('Error:', error);
-        alert('Error de conexión');
+        console.error('Error fetch:', error);
+        alert('Error de conexión: ' + error.message);
         if (btn) btn.disabled = false;
     });
 }
@@ -833,8 +1152,6 @@ function marcarEstado() {
 // ============================================
 function reiniciarViaje() {
     if (confirm('¿Iniciar un nuevo viaje?')) {
-        // Aquí podrías implementar la lógica para crear un nuevo viaje
-        // Por ahora, simplemente recargamos
         location.reload();
     }
 }
@@ -853,6 +1170,8 @@ function cerrarSesion() {
 // ============================================
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 Iniciando dashboard para placa:', placaConductor);
+    console.log('Estado actual:', estadoActualKey);
+    console.log('Viaje ID:', viajeId);
     
     // Iniciar GPS
     obtenerGPS();
@@ -861,6 +1180,13 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(function() {
         if (!gpsActivo) obtenerGPS();
     }, 30000);
+    
+    // Cerrar modal con ESC
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && esperandoKilometraje) {
+            cerrarModal();
+        }
+    });
 });
 
 // Ajuste de altura para móviles

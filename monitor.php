@@ -18,10 +18,9 @@ if ($fecha_seleccionada) {
     
     // Obtener todas las plantillas de conductores para la fecha seleccionada
     $query_plantillas = "SELECT id, nombre, placa 
-                         FROM DPL.externos.plantillas_conductores 
-                         WHERE fecha_plantilla = ? AND activo = 1
-                         ORDER BY nombre";
-    
+                             FROM DPL.externos.plantillas_conductores 
+                             WHERE fecha_plantilla = ? 
+                             ORDER BY nombre";  
     $stmt = sqlsrv_query($conn, $query_plantillas, array($fecha_seleccionada));
     
     if ($stmt !== false) {
@@ -75,6 +74,10 @@ if ($fecha_seleccionada) {
                     $resultados[$placa]['estado_general'] = $viaje['estado_general'];
                     $resultados[$placa]['fecha_inicio'] = $viaje['fecha_inicio_viaje'];
                     $resultados[$placa]['fecha_fin'] = $viaje['fecha_fin_viaje'];
+                    
+                    // AÑADIR KILOMETRAJES
+                    $resultados[$placa]['kilometraje1'] = $viaje['kilometraje1'] ?? null;
+                    $resultados[$placa]['kilometraje2'] = $viaje['kilometraje2'] ?? null;
                 }
             }
             sqlsrv_free_stmt($stmt_viajes);
@@ -529,6 +532,35 @@ function getEstadoActual($data) {
             margin-top: 4px;
         }
 
+        /* Estilos para kilometraje */
+        .kilometraje-valor {
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: #f8f9fa;
+            display: inline-block;
+            font-size: 13px;
+        }
+
+        .kilometraje-valor.salida {
+            color: var(--verde);
+            border-left: 3px solid var(--verde);
+        }
+
+        .kilometraje-valor.retorno {
+            color: var(--naranja);
+            border-left: 3px solid var(--naranja);
+        }
+
+        .kilometraje-label {
+            font-size: 10px;
+            color: var(--texto-secundario);
+            display: block;
+            margin-bottom: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
         /* No datos */
         .no-datos {
             text-align: center;
@@ -601,7 +633,7 @@ function getEstadoActual($data) {
             }
 
             table {
-                min-width: 800px;
+                min-width: 1000px; /* Aumentado para las nuevas columnas */
             }
 
             .resumen-grid {
@@ -692,6 +724,8 @@ function getEstadoActual($data) {
                         <th>Estado Actual</th>
                         <th>Timeline</th>
                         <th>Horarios</th>
+                        <th>KM Salida</th>
+                        <th>KM Retorno</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -753,6 +787,22 @@ function getEstadoActual($data) {
                                     ?>
                                 </div>
                                 <?php endif; ?>
+                            <?php else: ?>
+                                <span style="color: var(--gris);">—</span>
+                            <?php endif; ?>
+                        </td>
+                        <td style="text-align: center;">
+                            <?php if (!empty($data['kilometraje1'])): ?>
+                                <div class="kilometraje-label">KM Salida</div>
+                                <span class="kilometraje-valor salida"><?= number_format($data['kilometraje1'], 0, ',', '.') ?></span>
+                            <?php else: ?>
+                                <span style="color: var(--gris);">—</span>
+                            <?php endif; ?>
+                        </td>
+                        <td style="text-align: center;">
+                            <?php if (!empty($data['kilometraje2'])): ?>
+                                <div class="kilometraje-label">KM Retorno</div>
+                                <span class="kilometraje-valor retorno"><?= number_format($data['kilometraje2'], 0, ',', '.') ?></span>
                             <?php else: ?>
                                 <span style="color: var(--gris);">—</span>
                             <?php endif; ?>

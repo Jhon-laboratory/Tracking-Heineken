@@ -356,7 +356,7 @@ if (isset($_POST['confirmar_guardado'])) {
             try {
                 // Primero, desactivar registros anteriores para esta fecha
                 $query_desactivar = "UPDATE DPL.externos.plantillas_conductores 
-                                     SET activo = 0 
+                                     SET activo = 1 
                                      WHERE fecha_plantilla = ? AND activo = 1";
                 $params_desactivar = [$fecha];
                 $stmt_desactivar = sqlsrv_query($conn, $query_desactivar, $params_desactivar);

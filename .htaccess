@@ -1,0 +1,26 @@
+# Deshabilitar el listado de directorios
+Options -Indexes
+
+# Proteger archivos sensibles
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Prevenir acceso a archivos de configuración
+<FilesMatch "(^#.*#|\.(bak|config|dist|fla|inc|ini|log|psd|sh|sql|swp)|~)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
+
+# Activar el motor de reescritura
+RewriteEngine On
+
+# Quitar .php de las URLs
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME}\.php -f
+RewriteRule ^(.*)$ $1.php [L]
+
+# Redirigir URLs con .php a sin .php
+RewriteCond %{THE_REQUEST} \s/([^.]+)\.php [NC]
+RewriteRule ^ /%1 [R=301,L]
