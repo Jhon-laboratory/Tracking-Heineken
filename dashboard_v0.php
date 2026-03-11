@@ -63,11 +63,11 @@ if (!isset($_SESSION['plantilla_conductor_id'])) {
 
 $plantilla_conductor_id = $_SESSION['plantilla_conductor_id'] ?? 0;
 
-// Función para obtener el viaje del día (activo o completado)
-function obtenerViajeDelDia($conn, $placa, $plantilla_id, $nombre_conductor) {
+// Función para obtener o crear viaje activo
+function obtenerViajeActivo($conn, $placa, $plantilla_id, $nombre_conductor) {
     $fecha_actual = date('Y-m-d');
     
-    // Buscar viaje para hoy (primero el más reciente)
+    // Buscar viaje activo (incluyendo completados para hoy)
     $query = "SELECT * FROM externos.viajes_tracking 
               WHERE placa = ? AND fecha_viaje = ? 
               ORDER BY id DESC";
@@ -82,7 +82,7 @@ function obtenerViajeDelDia($conn, $placa, $plantilla_id, $nombre_conductor) {
         }
     }
     
-    // Si no hay viaje, crear uno nuevo solo si hay plantilla
+    // Si no hay viaje, crear uno nuevo
     if ($plantilla_id > 0) {
         $ip_address = $_SERVER['REMOTE_ADDR'] ?? '';
         $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
@@ -120,39 +120,28 @@ function obtenerViajeDelDia($conn, $placa, $plantilla_id, $nombre_conductor) {
     return null;
 }
 
+// Función para obtener el último estado marcado
+function obtenerUltimoEstadoMarcado($viaje) {
+    for ($i = 7; $i >= 1; $i--) {
+        $campo_fecha = 'estado' . $i . '_fecha';
+        if ($viaje && isset($viaje[$campo_fecha]) && $viaje[$campo_fecha] !== null) {
+            return [
+                'numero' => $i,
+                'key' => $viaje['estado' . $i . '_key'] ?? null,
+                'nombre' => $viaje['estado' . $i . '_nombre'] ?? null,
+                'fecha' => $viaje[$campo_fecha]
+            ];
+        }
+    }
+    return null;
+}
+
 // Función para registrar una marcación
 function registrarMarcacion($conn, $viaje_id, $estado_numero, $estado_key, $estado_nombre, $latitud, $longitud, $precision_gps, $kilometraje = null) {
     // Log para debug
     error_log("=== INICIO registrarMarcacion ===");
     error_log("viaje_id: " . $viaje_id);
     error_log("estado_numero: " . $estado_numero);
-    
-    // Verificar si el viaje ya está completado
-    $checkQuery = "SELECT estado_general FROM externos.viajes_tracking WHERE id = ?";
-    $checkStmt = sqlsrv_query($conn, $checkQuery, array($viaje_id));
-    if ($checkStmt !== false) {
-        $checkRow = sqlsrv_fetch_array($checkStmt, SQLSRV_FETCH_ASSOC);
-        sqlsrv_free_stmt($checkStmt);
-        
-        if ($checkRow && $checkRow['estado_general'] === 'completado') {
-            error_log("ERROR: El viaje ya está completado");
-            return false;
-        }
-    }
-    
-    // Verificar si este estado ya fue marcado
-    $checkQuery = "SELECT estado" . $estado_numero . "_fecha FROM externos.viajes_tracking WHERE id = ?";
-    $checkStmt = sqlsrv_query($conn, $checkQuery, array($viaje_id));
-    if ($checkStmt !== false) {
-        $checkRow = sqlsrv_fetch_array($checkStmt, SQLSRV_FETCH_ASSOC);
-        sqlsrv_free_stmt($checkStmt);
-        
-        $campo_fecha = 'estado' . $estado_numero . '_fecha';
-        if ($checkRow && $checkRow[$campo_fecha] !== null) {
-            error_log("ERROR: El estado $estado_numero ya fue marcado anteriormente");
-            return false;
-        }
-    }
     
     // Mapeo de campos según el número de estado
     $campos = [
@@ -228,11 +217,11 @@ if ($conn === false) {
     die("Error de conexión a la base de datos");
 }
 
-// Obtener el viaje del día (activo o completado)
-$viaje_activo = obtenerViajeDelDia($conn, $placa_conductor, $plantilla_conductor_id, $nombre_conductor);
+// Obtener o crear viaje activo
+$viaje_activo = obtenerViajeActivo($conn, $placa_conductor, $plantilla_conductor_id, $nombre_conductor);
 
 // ============================================
-// LÓGICA PARA DETERMINAR ESTADO ACTUAL
+// LÓGICA CORREGIDA PARA DETERMINAR ESTADO ACTUAL
 // ============================================
 $estado_actual_key = 'salida_ruta'; // Por defecto
 $estado_actual_numero = 1;
@@ -264,7 +253,7 @@ if ($viaje_activo) {
         }
     }
     
-    // ===== LÓGICA PRINCIPAL =====
+    // ===== LÓGICA PRINCIPAL CORREGIDA =====
     // Verificar PRIMERO si el viaje ya está completado por estado_general
     if ($viaje_activo['estado_general'] === 'completado') {
         $viaje_completado = true;
@@ -794,31 +783,60 @@ h1{
     background: #ccc;
 }
 
+.btn-reinicio {
+    width:100%;
+    padding: clamp(14px, 3vh, 20px);
+    border:none;
+    border-radius:22px;
+    font-size: clamp(1.1rem, 4vw, 1.3rem);
+    font-weight:800;
+    background: var(--naranja);
+    color:white;
+    cursor:pointer;
+    transition:.2s;
+    letter-spacing:1px;
+    box-shadow:0 4px 0 #c07100;
+    border:1px solid rgba(255,255,255,0.2);
+    margin-bottom: 10px;
+}
+
+.btn-reinicio:hover {
+    background: #e08500;
+    transform:translateY(-3px);
+    box-shadow:0 7px 0 #c07100, 0 15px 25px rgba(224,133,0,.25);
+}
+
 .logout-btn {
     width:100%;
     background: #f0f0f0;
     border: none;
     color: #666;
-    font-size: 1rem;
-    font-weight: 600;
+    font-size: 0.9rem;
     cursor: pointer;
-    padding: 15px 16px;
-    border-radius: 22px;
+    padding: 12px 16px;
+    border-radius: 20px;
     margin-top: 5px;
     transition: all 0.2s;
-    box-shadow: 0 2px 0 #d0d0d0;
+    box-shadow: none;
+    font-weight: normal;
 }
 
 .logout-btn:hover {
     background: #ffebee;
     color: var(--rojo);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 0 #c07100, 0 5px 15px rgba(198,40,40,0.2);
+    transform: none;
+    box-shadow: none;
 }
 
-.logout-btn:active {
-    transform: translateY(2px);
-    box-shadow: 0 1px 0 #d0d0d0;
+.completado-badge {
+    background: var(--verde);
+    color: white;
+    text-align: center;
+    padding: 15px;
+    border-radius: 50px;
+    font-weight: bold;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
 }
 
 /* Mensaje de completado */
@@ -871,7 +889,7 @@ h1{
             <div class="nombre-conductor">👤 <?= htmlspecialchars($nombre_conductor) ?></div>
             <div class="placa-badge">🚛 <?= htmlspecialchars($placa_conductor) ?></div>
             <?php if ($viaje_activo): ?>
-            <div class="viaje-id">Viaje #<?= $viaje_activo['id'] ?> - <?= $viaje_activo['estado_general'] ?></div>
+            <div class="viaje-id">Viaje #<?= $viaje_activo['id'] ?></div>
             <?php endif; ?>
         </div>
     </div>
@@ -925,11 +943,14 @@ h1{
 </div>
 
 <div class="card">
-    <!-- BOTÓN PRINCIPAL -->
+    <!-- BOTONES PRINCIPALES -->
     <div id="botonesContainer">
         <?php if ($viaje_completado || $estado_actual_key === 'completado'): ?>
         <button class="btn-marcar" disabled>
             ✅ VIAJE COMPLETADO
+        </button>
+        <button onclick="reiniciarViaje()" class="btn-reinicio">
+            🔄 NUEVO VIAJE
         </button>
         <?php else: ?>
         <button onclick="marcarEstado()" class="btn-marcar" id="btnMarcar">
@@ -938,8 +959,8 @@ h1{
         <?php endif; ?>
     </div>
     
-    <!-- SOLO BOTÓN DE CERRAR SESIÓN -->
-    <button onclick="cerrarSesion()" class="logout-btn">CERRAR SESIÓN</button>
+    <!-- BOTÓN DE CERRAR SESIÓN -->
+    <button onclick="cerrarSesion()" class="logout-btn">Cerrar sesión</button>
 </div>
 
 </div>
@@ -1121,10 +1142,12 @@ function enviarMarcacion(estado, kilometraje) {
             
             if (data.viaje_completado) {
                 alert('✅ ¡Viaje completado exitosamente!');
+                // Recargar para mostrar estado completado
+                location.reload();
+            } else {
+                // Recargar para actualizar la interfaz
+                location.reload();
             }
-            
-            // Recargar para mostrar el estado actualizado
-            location.reload();
         } else {
             alert('Error: ' + (data.error || 'Error desconocido'));
             var btn = document.getElementById('btnMarcar');
@@ -1140,11 +1163,19 @@ function enviarMarcacion(estado, kilometraje) {
 }
 
 // ============================================
-// CERRAR SESIÓN (CORREGIDO)
+// REINICIAR VIAJE
+// ============================================
+function reiniciarViaje() {
+    if (confirm('¿Iniciar un nuevo viaje?')) {
+        window.location.href = 'dashboard.php?nuevo=1';
+    }
+}
+
+// ============================================
+// CERRAR SESIÓN
 // ============================================
 function cerrarSesion() {
-    if (confirm('¿Estás seguro que deseas cerrar sesión?')) {
-        // Redirigir a logout.php para destruir la sesión
+    if (confirm('¿Cerrar sesión?')) {
         window.location.href = 'logout.php';
     }
 }
@@ -1156,21 +1187,24 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 Iniciando dashboard');
     console.log('Viaje completado:', viajeCompletado);
     console.log('Estado actual:', estadoActualKey);
-    console.log('Estados marcados:', estadosMarcados);
     
     obtenerGPS();
     
-    // Reintentar GPS cada 30 segundos
     setInterval(function() {
         if (!gpsActivo) obtenerGPS();
     }, 30000);
     
-    // Cerrar modal con ESC
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape' && esperandoKilometraje) {
             cerrarModal();
         }
     });
+    
+    // Si hay parámetro nuevo, redirigir
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('nuevo')) {
+        window.location.href = 'dashboard.php';
+    }
 });
 
 // Ajuste de altura para móviles

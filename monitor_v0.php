@@ -7,325 +7,20 @@ session_start();
 
 require_once 'conexion.php';
 
-// IMPORTACIONES GLOBALES - FUERA DE CUALQUIER IF
-require_once __DIR__ . '/vendor/autoload.php';
-
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Style\Color;
-use PhpOffice\PhpSpreadsheet\Cell\DataType;
-
 $fecha_seleccionada = isset($_GET['fecha']) ? $_GET['fecha'] : date('Y-m-d');
 $buscar_placa = isset($_GET['buscar']) ? trim($_GET['buscar']) : '';
 $resultados = [];
 $resumen_estados = [];
-
-// ============================================
-// PROCESAR DESCARGA EXCEL - AHORA LAS USE YA ESTÁN FUERA
-// ============================================
-if (isset($_GET['exportar']) && $_GET['exportar'] == 'excel') {
-    
-    // Función para ajustar hora (restar 4 horas)
-    function ajustarHoraExport($fecha) {
-        if (empty($fecha)) return null;
-        
-        if ($fecha instanceof DateTime) {
-            $nueva = clone $fecha;
-            $nueva->modify('-4 hours');
-            return $nueva;
-        }
-        
-        if (is_string($fecha)) {
-            $timestamp = strtotime($fecha);
-            if ($timestamp !== false) {
-                $timestamp -= (4 * 3600);
-                return date('Y-m-d H:i:s', $timestamp);
-            }
-        }
-        
-        return $fecha;
-    }
-    
-    // Función para formatear hora
-    function formatearHoraExport($fecha) {
-        if (empty($fecha)) return '';
-        if ($fecha instanceof DateTime) {
-            return $fecha->format('H:i');
-        }
-        if (is_string($fecha)) {
-            return substr($fecha, 11, 5);
-        }
-        return '';
-    }
-    
-    // Obtener datos para exportar
-    $database = new Database();
-    $conn = $database->getConnection();
-    
-    // Obtener todas las plantillas de conductores para la fecha seleccionada
-    $query_plantillas = "SELECT id, nombre, placa, fecha_plantilla 
-                         FROM DPL.externos.plantillas_conductores 
-                         WHERE fecha_plantilla = ? 
-                         ORDER BY nombre";
-    $stmt = sqlsrv_query($conn, $query_plantillas, array($fecha_seleccionada));
-    
-    $datos_exportar = [];
-    if ($stmt !== false) {
-        while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC)) {
-            $datos_exportar[$row['placa']] = [
-                'plantilla_id' => $row['id'],
-                'nombre' => $row['nombre'],
-                'placa' => $row['placa'],
-                'fecha_plantilla' => $row['fecha_plantilla'],
-                'estados' => [],
-                'ultimo_estado' => 0,
-                'progreso' => 0,
-                'estado_general' => 'pendiente'
-            ];
-        }
-        sqlsrv_free_stmt($stmt);
-    }
-    
-    // Obtener todos los viajes para esa fecha
-    if (!empty($datos_exportar)) {
-        $placas = array_keys($datos_exportar);
-        $placeholders = implode(',', array_fill(0, count($placas), '?'));
-        
-        $query_viajes = "SELECT * FROM externos.viajes_tracking 
-                         WHERE placa IN ($placeholders) AND fecha_viaje = ?
-                         ORDER BY placa";
-        
-        $params = array_merge($placas, array($fecha_seleccionada));
-        $stmt_viajes = sqlsrv_query($conn, $query_viajes, $params);
-        
-        if ($stmt_viajes !== false) {
-            while ($viaje = sqlsrv_fetch_array($stmt_viajes, SQLSRV_FETCH_ASSOC)) {
-                $placa = $viaje['placa'];
-                
-                if (isset($datos_exportar[$placa])) {
-                    // Procesar estados del viaje
-                    $ultimo_estado_numero = 0;
-                    
-                    for ($i = 1; $i <= 7; $i++) {
-                        $campo_fecha = 'estado' . $i . '_fecha';
-                        if (!empty($viaje[$campo_fecha])) {
-                            $ultimo_estado_numero = $i;
-                        }
-                    }
-                    
-                    $datos_exportar[$placa]['viaje_id'] = $viaje['id'];
-                    $datos_exportar[$placa]['ultimo_estado'] = $ultimo_estado_numero;
-                    $datos_exportar[$placa]['progreso'] = round(($ultimo_estado_numero / 7) * 100);
-                    $datos_exportar[$placa]['estado_general'] = $viaje['estado_general'];
-                    $datos_exportar[$placa]['fecha_inicio'] = ajustarHoraExport($viaje['fecha_inicio_viaje'] ?? null);
-                    $datos_exportar[$placa]['fecha_fin'] = ajustarHoraExport($viaje['fecha_fin_viaje'] ?? null);
-                    $datos_exportar[$placa]['kilometraje1'] = $viaje['kilometraje1'] ?? null;
-                    $datos_exportar[$placa]['kilometraje2'] = $viaje['kilometraje2'] ?? null;
-                }
-            }
-            sqlsrv_free_stmt($stmt_viajes);
-        }
-    }
-    
-    // Función para obtener el nombre del estado actual
-    function getEstadoActualExport($data) {
-        if (empty($data['ultimo_estado']) || $data['ultimo_estado'] == 0) {
-            return 'No iniciado';
-        }
-        if ($data['estado_general'] === 'completado') {
-            return 'Completado';
-        }
-        
-        $estados_nombres = [
-            1 => 'Salida Ruta',
-            2 => 'Retorno de ruta',
-            3 => 'Pluma en bodega',
-            4 => 'Inicio Liquidación',
-            5 => 'Fin Liquidación',
-            6 => 'Inicio Caja',
-            7 => 'Fin Caja'
-        ];
-        
-        $siguiente = $data['ultimo_estado'] + 1;
-        return $estados_nombres[$siguiente] ?? 'En progreso';
-    }
-    
-    // Crear nuevo documento Excel
-    $spreadsheet = new Spreadsheet();
-    $sheet = $spreadsheet->getActiveSheet();
-    
-    // Título del reporte
-    $sheet->setTitle('Monitor de Placas');
-    $sheet->setCellValue('A1', 'REPORTE DE MONITOREO DE PLACAS RANSA');
-    $sheet->setCellValue('A2', 'Fecha: ' . date('d/m/Y', strtotime($fecha_seleccionada)));
-    $sheet->mergeCells('A1:I1');
-    $sheet->mergeCells('A2:I2');
-    
-    // Estilo del título
-    $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
-    $sheet->getStyle('A2')->getFont()->setItalic(true);
-    
-    // Cabeceras
-    $cabeceras = [
-        'A' => 'Placa',
-        'B' => 'Conductor',
-        'C' => 'Fecha',
-        'D' => 'Progreso',
-        'E' => 'Estado Actual',
-        'F' => 'KM Salida',
-        'G' => 'KM Retorno',
-        'H' => 'Inicio',
-        'I' => 'Fin'
-    ];
-    
-    $fila = 4;
-    foreach ($cabeceras as $col => $titulo) {
-        $sheet->setCellValue($col . $fila, $titulo);
-    }
-    
-    // Estilo de cabeceras
-    $headerStyle = [
-        'font' => [
-            'bold' => true,
-            'color' => ['rgb' => 'FFFFFF'],
-            'size' => 11,
-        ],
-        'fill' => [
-            'fillType' => Fill::FILL_SOLID,
-            'startColor' => ['rgb' => '009A3F'],
-        ],
-        'alignment' => [
-            'horizontal' => Alignment::HORIZONTAL_CENTER,
-            'vertical' => Alignment::VERTICAL_CENTER,
-        ],
-        'borders' => [
-            'allBorders' => [
-                'borderStyle' => Border::BORDER_THIN,
-                'color' => ['rgb' => '000000'],
-            ],
-        ],
-    ];
-    
-    $sheet->getStyle('A4:I4')->applyFromArray($headerStyle);
-    
-    // Datos
-    $fila = 5;
-    foreach ($datos_exportar as $placa => $data) {
-        $sheet->setCellValue('A' . $fila, $placa);
-        $sheet->setCellValue('B' . $fila, $data['nombre']);
-        $sheet->setCellValue('C' . $fila, date('d/m/Y', strtotime($fecha_seleccionada)));
-        $sheet->setCellValue('D' . $fila, $data['progreso'] . '%');
-        $sheet->setCellValue('E' . $fila, getEstadoActualExport($data));
-        $sheet->setCellValueExplicit('F' . $fila, $data['kilometraje1'] ?? '', DataType::TYPE_STRING);
-        $sheet->setCellValueExplicit('G' . $fila, $data['kilometraje2'] ?? '', DataType::TYPE_STRING);
-        $sheet->setCellValue('H' . $fila, formatearHoraExport($data['fecha_inicio'] ?? null));
-        $sheet->setCellValue('I' . $fila, formatearHoraExport($data['fecha_fin'] ?? null));
-        
-        // Estilo para celdas de datos
-        $dataStyle = [
-            'alignment' => [
-                'vertical' => Alignment::VERTICAL_CENTER,
-            ],
-            'borders' => [
-                'allBorders' => [
-                    'borderStyle' => Border::BORDER_THIN,
-                    'color' => ['rgb' => 'CCCCCC'],
-                ],
-            ],
-        ];
-        
-        $sheet->getStyle('A' . $fila . ':I' . $fila)->applyFromArray($dataStyle);
-        
-        // Formato especial para la columna de progreso (centrado)
-        $sheet->getStyle('D' . $fila)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        
-        // Formato para columnas de kilometraje (centrado)
-        $sheet->getStyle('F' . $fila . ':G' . $fila)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        
-        // Formato para horas (centrado)
-        $sheet->getStyle('H' . $fila . ':I' . $fila)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        
-        $fila++;
-    }
-    
-    // Autoajustar columnas
-    foreach (range('A', 'I') as $col) {
-        $sheet->getColumnDimension($col)->setAutoSize(true);
-    }
-    
-    // Nota al pie
-    $sheet->setCellValue('A' . ($fila + 1), 'RANSA 2026');
-    $sheet->mergeCells('A' . ($fila + 1) . ':I' . ($fila + 1));
-    $sheet->getStyle('A' . ($fila + 1))->getFont()->setItalic(true)->setSize(10);
-    
-    // Configurar descarga
-    $nombreArchivo = 'Monitor_Placas_' . $fecha_seleccionada . '.xlsx';
-    
-    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment;filename="' . $nombreArchivo . '"');
-    header('Cache-Control: max-age=0');
-    header('Expires: Mon, 26 Jul 1997 05:00:00 GMT');
-    header('Last-Modified: ' . gmdate('D, d M Y H:i:s') . ' GMT');
-    header('Cache-Control: cache, must-revalidate');
-    header('Pragma: public');
-    
-    $writer = new Xlsx($spreadsheet);
-    $writer->save('php://output');
-    exit;
-}
-
-// ============================================
-// CONTINUACIÓN DEL CÓDIGO NORMAL (PARA MOSTRAR LA PÁGINA)
-// ============================================
-
-// Función para ajustar hora (restar 4 horas) - para la vista normal
-function ajustarHora($fecha) {
-    if (empty($fecha)) return null;
-    
-    if ($fecha instanceof DateTime) {
-        $nueva = clone $fecha;
-        $nueva->modify('-4 hours');
-        return $nueva;
-    }
-    
-    if (is_string($fecha)) {
-        $timestamp = strtotime($fecha);
-        if ($timestamp !== false) {
-            $timestamp -= (4 * 3600);
-            return date('Y-m-d H:i:s', $timestamp);
-        }
-    }
-    
-    return $fecha;
-}
-
-// Función para formatear hora (para la vista normal)
-function formatearHora($fecha) {
-    if (empty($fecha)) return null;
-    
-    if ($fecha instanceof DateTime) {
-        return $fecha->format('H:i');
-    }
-    
-    if (is_string($fecha)) {
-        return substr($fecha, 11, 5);
-    }
-    
-    return null;
-}
 
 if ($fecha_seleccionada) {
     $database = new Database();
     $conn = $database->getConnection();
     
     // Obtener todas las plantillas de conductores para la fecha seleccionada
-    $query_plantillas = "SELECT id, nombre, placa, fecha_plantilla 
-                         FROM DPL.externos.plantillas_conductores 
-                         WHERE fecha_plantilla = ? 
-                         ORDER BY nombre";
+    $query_plantillas = "SELECT id, nombre, placa 
+                             FROM DPL.externos.plantillas_conductores 
+                             WHERE fecha_plantilla = ? 
+                             ORDER BY nombre";  
     $stmt = sqlsrv_query($conn, $query_plantillas, array($fecha_seleccionada));
     
     if ($stmt !== false) {
@@ -334,9 +29,8 @@ if ($fecha_seleccionada) {
                 'plantilla_id' => $row['id'],
                 'nombre' => $row['nombre'],
                 'placa' => $row['placa'],
-                'fecha_plantilla' => $row['fecha_plantilla'],
                 'estados' => [],
-                'ultimo_estado' => 0,
+                'ultimo_estado' => null,
                 'progreso' => 0,
                 'estado_general' => 'pendiente'
             ];
@@ -378,12 +72,10 @@ if ($fecha_seleccionada) {
                     $resultados[$placa]['ultimo_estado'] = $ultimo_estado_numero;
                     $resultados[$placa]['progreso'] = round(($ultimo_estado_numero / 7) * 100);
                     $resultados[$placa]['estado_general'] = $viaje['estado_general'];
+                    $resultados[$placa]['fecha_inicio'] = $viaje['fecha_inicio_viaje'];
+                    $resultados[$placa]['fecha_fin'] = $viaje['fecha_fin_viaje'];
                     
-                    // Ajustar horas restando 4 horas
-                    $resultados[$placa]['fecha_inicio'] = ajustarHora($viaje['fecha_inicio_viaje'] ?? null);
-                    $resultados[$placa]['fecha_fin'] = ajustarHora($viaje['fecha_fin_viaje'] ?? null);
-                    
-                    // Añadir kilometrajes
+                    // AÑADIR KILOMETRAJES
                     $resultados[$placa]['kilometraje1'] = $viaje['kilometraje1'] ?? null;
                     $resultados[$placa]['kilometraje2'] = $viaje['kilometraje2'] ?? null;
                 }
@@ -448,8 +140,7 @@ function getEstadoActual($data) {
         7 => 'Fin Caja'
     ];
     
-    $siguiente = $data['ultimo_estado'] + 1;
-    return $estados_nombres[$siguiente] ?? 'En progreso';
+    return $estados_nombres[$data['ultimo_estado'] + 1] ?? 'En progreso';
 }
 ?>
 <!DOCTYPE html>
@@ -641,29 +332,6 @@ function getEstadoActual($data) {
             background: var(--verde-hover);
         }
 
-        .btn-excel {
-            background: #1D6F42;
-            color: white;
-            border: none;
-            padding: 10px 25px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            white-space: nowrap;
-            text-decoration: none;
-        }
-
-        .btn-excel:hover {
-            background: #0e5a2e;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
-
         .btn-limpiar {
             background: var(--blanco);
             color: var(--texto);
@@ -730,7 +398,6 @@ function getEstadoActual($data) {
             border: 1px solid var(--borde);
             overflow: hidden;
             margin-top: 20px;
-            position: relative;
         }
 
         table {
@@ -894,21 +561,6 @@ function getEstadoActual($data) {
             letter-spacing: 0.3px;
         }
 
-        /* Badge para hora ajustada */
-        .hora-ajustada {
-            background: #f0f0f0;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            display: inline-block;
-        }
-
-        .hora-ajustada i {
-            color: var(--naranja);
-            margin-right: 4px;
-            font-size: 10px;
-        }
-
         /* No datos */
         .no-datos {
             text-align: center;
@@ -971,7 +623,7 @@ function getEstadoActual($data) {
                 width: 100%;
             }
 
-            .btn-ver, .btn-excel, .btn-limpiar {
+            .btn-ver, .btn-limpiar {
                 width: 100%;
                 justify-content: center;
             }
@@ -981,7 +633,7 @@ function getEstadoActual($data) {
             }
 
             table {
-                min-width: 1200px;
+                min-width: 1000px; /* Aumentado para las nuevas columnas */
             }
 
             .resumen-grid {
@@ -996,16 +648,9 @@ function getEstadoActual($data) {
         <a href="dashboard.php" class="floating-button">
             <i class="fas fa-tachometer-alt"></i> Dashboard
         </a>
-        <div style="display: flex; gap: 10px;">
-            <a href="registro_plantilla.php" class="floating-button right">
-                <i class="fas fa-upload"></i> Cargar Plantilla
-            </a>
-            <?php if (!empty($resultados)): ?>
-            <a href="?fecha=<?= $fecha_seleccionada ?>&buscar=<?= urlencode($buscar_placa) ?>&exportar=excel" class="floating-button right" style="background: #1D6F42;">
-                <i class="fas fa-file-excel"></i> Exportar Excel
-            </a>
-            <?php endif; ?>
-        </div>
+        <a href="registro_plantilla.php" class="floating-button right">
+            <i class="fas fa-upload"></i> Cargar Plantilla
+        </a>
     </div>
 
     <div class="container">
@@ -1075,13 +720,12 @@ function getEstadoActual($data) {
                     <tr>
                         <th>Placa</th>
                         <th>Conductor</th>
-                        <th>Fecha</th>
                         <th>Progreso</th>
                         <th>Estado Actual</th>
                         <th>Timeline</th>
+                        <th>Horarios</th>
                         <th>KM Salida</th>
                         <th>KM Retorno</th>
-                        <th>Horarios</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1093,7 +737,6 @@ function getEstadoActual($data) {
                             <strong><?= htmlspecialchars($placa) ?></strong>
                         </td>
                         <td><?= htmlspecialchars($data['nombre']) ?></td>
-                        <td><?= date('d/m/Y', strtotime($fecha_seleccionada)) ?></td>
                         <td style="min-width: 120px;">
                             <div style="display: flex; align-items: center; gap: 10px;">
                                 <span style="font-weight: 500; min-width: 40px;"><?= $data['progreso'] ?>%</span>
@@ -1121,8 +764,36 @@ function getEstadoActual($data) {
                                 <?php endfor; ?>
                             </div>
                         </td>
+                        <td>
+                            <?php if (!empty($data['fecha_inicio'])): ?>
+                                <div><i class="far fa-clock" style="font-size: 11px;"></i> 
+                                    Inicio: <?php 
+                                        if ($data['fecha_inicio'] instanceof DateTime) {
+                                            echo $data['fecha_inicio']->format('H:i');
+                                        } else {
+                                            echo substr($data['fecha_inicio'], 11, 5);
+                                        }
+                                    ?>
+                                </div>
+                                <?php if (!empty($data['fecha_fin'])): ?>
+                                <div class="horario">
+                                    <i class="far fa-check-circle" style="font-size: 11px;"></i> 
+                                    Fin: <?php 
+                                        if ($data['fecha_fin'] instanceof DateTime) {
+                                            echo $data['fecha_fin']->format('H:i');
+                                        } else {
+                                            echo substr($data['fecha_fin'], 11, 5);
+                                        }
+                                    ?>
+                                </div>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <span style="color: var(--gris);">—</span>
+                            <?php endif; ?>
+                        </td>
                         <td style="text-align: center;">
                             <?php if (!empty($data['kilometraje1'])): ?>
+                                <div class="kilometraje-label">KM Salida</div>
                                 <span class="kilometraje-valor salida"><?= number_format($data['kilometraje1'], 0, ',', '.') ?></span>
                             <?php else: ?>
                                 <span style="color: var(--gris);">—</span>
@@ -1130,27 +801,9 @@ function getEstadoActual($data) {
                         </td>
                         <td style="text-align: center;">
                             <?php if (!empty($data['kilometraje2'])): ?>
+                                <div class="kilometraje-label">KM Retorno</div>
                                 <span class="kilometraje-valor retorno"><?= number_format($data['kilometraje2'], 0, ',', '.') ?></span>
                             <?php else: ?>
-                                <span style="color: var(--gris);">—</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if (!empty($data['fecha_inicio'])): ?>
-                                <div class="hora-ajustada">
-                                    <i class="fas fa-play"></i> 
-                                    Inicio: <?= formatearHora($data['fecha_inicio']) ?>
-                                </div>
-                            <?php endif; ?>
-                            
-                            <?php if (!empty($data['fecha_fin'])): ?>
-                                <div class="hora-ajustada" style="margin-top: 5px;">
-                                    <i class="fas fa-check"></i> 
-                                    Fin: <?= formatearHora($data['fecha_fin']) ?>
-                                </div>
-                            <?php endif; ?>
-                            
-                            <?php if (empty($data['fecha_inicio']) && empty($data['fecha_fin'])): ?>
                                 <span style="color: var(--gris);">—</span>
                             <?php endif; ?>
                         </td>
@@ -1174,7 +827,6 @@ function getEstadoActual($data) {
 
         <div class="footer">
             <p>Monitor de estado de placas RANSA © <?= date('Y') ?></p>
-            <p style="font-size: 11px;">* Las horas mostradas están ajustadas restando 4 horas</p>
         </div>
     </div>
 
